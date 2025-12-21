@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 多模态视频追踪标注平台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 min-h-screen p-4 md:p-8">
+    <div class="max-w-6xl mx-auto bg-white rounded-2xl shadow-xl p-6">
+        <div class="flex items-center gap-3 mb-6 border-b pb-4">
+            <div class="bg-indigo-600 p-2 rounded-lg text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-800">AI 视频追踪与图片标注</h1>
+        </div>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            <!-- 左侧控制区 -->
+            <div class="lg:col-span-1 space-y-5">
+                <!-- 模式切换 -->
+                <div class="flex items-center gap-3 p-3 bg-gray-100 rounded-lg">
+                    <span class="text-sm font-semibold text-gray-700" id="modeLabel">当前: 图片模式</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="modeToggle" class="sr-only peer">
+                        <div class="w-11 h-6 bg-gray-300 peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">1. 选择模型</label>
+                    <select id="modelSelect" class="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-gray-50">
+                        <option value="gemini-3-flash">Gemini-3-Flash (x666)</option>
+                        <option value="gemini-2.5-pro">Gemini-2.5-Pro (ChatAnywhere)</option>
+                        <option value="glm-4.6v">GLM-4.6V (SiliconFlow)</option>
+                        <option value="qwen-32b">Qwen3-VL-32B (SiliconFlow)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">2. 上传文件</label>
+                    <input type="file" id="fileInput" accept="image/*" class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer">
+                </div>
+
+                <!-- 视频高级选项 -->
+                <div id="videoOptions" class="hidden space-y-3 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" id="manualFrame" class="w-4 h-4 text-indigo-600">
+                        <label for="manualFrame" class="text-sm font-medium">手动抽帧模式 (推荐)</label>
+                    </div>
+                    <div id="frameRateDiv" class="hidden pl-6 border-l-2 border-indigo-200">
+                        <div class="mb-2">
+                            <label class="text-xs text-gray-600 block">抽帧频率 (帧/秒)</label>
+                            <input type="number" id="frameRate" value="1" min="0.1" max="10" step="0.5" class="w-full p-1 border rounded text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-600 block">并行请求数 (并发)</label>
+                            <input type="number" id="parallelCount" value="3" min="1" max="10" class="w-full p-1 border rounded text-sm">
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">3. 标注指令</label>
+                    <textarea id="promptInput" rows="3" class="w-full p-3 border border-gray-300 rounded-lg text-sm" placeholder="例如：追踪视频中的红色汽车..."></textarea>
+                </div>
+
+                <div class="space-y-2">
+                    <button id="startBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-md">
+                        <span id="btnText">开始分析</span>
+                        <div id="loader" class="loading"></div>
+                    </button>
+                    
+                    <button id="downloadBtn" disabled class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center justify-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span id="downloadText">下载结果</span>
+                    </button>
+                </div>
+
+                <div id="progressContainer" class="hidden">
+                    <div class="flex justify-between text-xs text-gray-600 mb-1">
+                        <span id="progressText">处理中...</span>
+                        <span id="progressPct">0%</span>
+                    </div>
+                    <div class="progress-bar"><div id="progressFill" class="progress-fill" style="width: 0%"></div></div>
+                </div>
+            </div>
+
+            <!-- 右侧展示区 -->
+            <div class="lg:col-span-3">
+                <!-- 视图容器 -->
+                <div class="video-wrapper border-2 border-dashed border-gray-300 bg-gray-50 min-h-[300px]" id="viewContainer">
+                    <!-- 图片模式 Canvas -->
+                    <canvas id="imageCanvas" class="max-w-full"></canvas>
+                    
+                    <!-- 视频模式组合 -->
+                    <video id="videoPlayer" class="hidden" controls playsinline crossorigin="anonymous"></video>
+                    <canvas id="overlayCanvas" class="hidden"></canvas>
+                </div>
+
+                <div class="flex justify-between items-center mt-3 px-1">
+                    <p id="statusMsg" class="text-sm text-gray-500 italic">等待任务...</p>
+                    <p id="apiInfo" class="text-xs text-gray-400 font-mono"></p>
+                </div>
+
+                <!-- 时间轴结果 -->
+                <div id="timelineResults" class="hidden mt-4">
+                    <h3 class="font-bold text-gray-700 mb-2 border-l-4 border-indigo-500 pl-2">追踪结果时间轴</h3>
+                    <div id="timelineContent" class="max-h-60 overflow-y-auto border rounded-lg bg-white divide-y divide-gray-100 text-sm"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="exportCanvas"></canvas>
+
+    <script src="config.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
