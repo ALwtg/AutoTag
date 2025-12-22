@@ -45,11 +45,11 @@ https://github.com/user-attachments/assets/969acf19-a268-4646-8899-296dc613f52a
 1. **获取代码**
    下载 `AutoTag.html` 文件。
 2. **环境准备**
-   由于是纯前端项目，你只需要一个现代化的浏览器（Chrome / Edge / Safari）。
+   由于是纯前端项目，你只需要一个浏览器（Chrome / Edge / Safari）。
 3. **配置 API (可选)**
-   在源码中的 `CONFIGS` 常量中填入你自己的 API Key，以确保服务的稳定性。
+   在源码中的 `CONFIGS.js` 常量中填入你自己的 API Key，目前只支持OpenAI兼容格式。
 4. **运行**
-   双击 `AutoTag.html` 即可在浏览器中开启你的 AI 标注之旅。
+   双击 `AutoTag.html` 即可在浏览器中运行。
 
 ---
 
