@@ -15,6 +15,11 @@
   - 
 
 https://github.com/user-attachments/assets/969acf19-a268-4646-8899-296dc613f52a
+  - 在多物体追踪和遮挡也表现出较好的性能：
+  - 
+
+https://github.com/user-attachments/assets/a0bb5f5c-3e02-4dff-aa08-8763db96cf2f
+
 
 
 - **🧠 强大的模型集成**
@@ -37,6 +42,10 @@ https://github.com/user-attachments/assets/969acf19-a268-4646-8899-296dc613f52a
 - **Canvas 实时渲染**：使用双层 Canvas 架构，底层播放视频，顶层由算法驱动实时同步绘制标注框。
 - **录制引擎**：集成 `MediaRecorder API`，实现在浏览器前端完成视频流的实时合成与导出，无需后端参与。
 - **归一化坐标处理**：使用 0-1000 的归一化坐标系，确保标注结果在不同分辨率的显示器上保持一致。
+- **支持yolo格式输出**：<img width="2560" height="1530" alt="image" src="https://github.com/user-attachments/assets/28c1d411-91e4-431b-a71c-cc33a485195b" />
+<img width="2560" height="1530" alt="image" src="https://github.com/user-attachments/assets/bf49ca3f-3ac8-4205-8e72-27bac293220f" />
+
+
 
 ---
 
@@ -65,6 +74,20 @@ https://github.com/user-attachments/assets/969acf19-a268-4646-8899-296dc613f52a
 
 ---
 
+## 💰 单次成本与价格预估 
+
+- **示例gemini-3-flash API 价格**：
+- （实际价格会有所浮动）
+- • 输入：0.002 CA/1K Tokens
+- • 输出：0.012 CA/1K Tokens
+- 请求一次平均
+- 问题Tokens: 1176
+- 回答Tokens: 307
+- 总消耗Tokens: 1483
+- 扣费大约： 0.006元
+
+---
+
 ## ⚠️ 注意事项
 
 - **API 额度**：本工具依赖外部模型 API，频繁处理长视频可能会消耗较多 Token。
@@ -72,6 +95,8 @@ https://github.com/user-attachments/assets/969acf19-a268-4646-8899-296dc613f52a
 - **浏览器性能**：视频导出过程通过前端录制，录制期间请勿切换标签页。
 
 ---
+
+
 
 *注：精度取决于模型聪明度  
 *作者：一只小白虎_晓枫呀*
