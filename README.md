@@ -43,7 +43,7 @@ https://github.com/user-attachments/assets/969acf19-a268-4646-8899-296dc613f52a
 ## 🚀 快速开始
 
 1. **获取代码**
-   下载 `AutoTag.html` 文件。
+   下载 `Web/` 文件或者直接在版本更新中选择最新版本下载压缩包文件。
 2. **环境准备**
    由于是纯前端项目，你只需要一个浏览器（Chrome / Edge / Safari）。
 3. **配置 API (可选)**
