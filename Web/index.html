@@ -33,16 +33,34 @@
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 mb-2">1. 选择模型</label>
                     <select id="modelSelect" class="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-gray-50">
-                        <option value="gemini-3-flash">Gemini-3-Flash (x666)</option>
-                        <option value="gemini-2.5-pro">Gemini-2.5-Pro (ChatAnywhere)</option>
-                        <option value="glm-4.6v">GLM-4.6V (SiliconFlow)</option>
-                        <option value="qwen-32b">Qwen3-VL-32B (SiliconFlow)</option>
+                        <!-- 模型选项将由 JS 动态加载 -->
                     </select>
                 </div>
 
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 mb-2">2. 上传文件</label>
-                    <input type="file" id="fileInput" accept="image/*" class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer">
+                    <input type="file" id="fileInput" accept="image/*" multiple class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer">
+                </div>
+                
+                <div class="mt-2">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">上传 classes.txt (可选)</label>
+                    <input type="file" id="classesInput" accept=".txt" class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-gray-50 file:text-gray-700 hover:file:bg-gray-100 cursor-pointer">
+                    <p class="text-xs text-gray-400 mt-1">若不上传，将自动生成并维护类别ID。</p>
+                </div>
+                
+                <div class="space-y-2 p-3 bg-gray-100 rounded-lg" id="imageOptions">
+                    <div class="flex items-center gap-2 mb-2">
+                        <input type="checkbox" id="extractTransparent" class="w-4 h-4 text-indigo-600">
+                        <label for="extractTransparent" class="text-xs text-gray-700 font-medium">提取透明图 (消耗算力)</label>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-600 block">透明图前置放大倍数</label>
+                        <input type="number" id="scaleFactor" value="4" min="1" step="0.1" class="w-full p-2 border rounded text-sm">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-600 block">批量并发数量</label>
+                        <input type="number" id="parallelCountGlobal" value="3" min="1" max="10" class="w-full p-2 border rounded text-sm">
+                    </div>
                 </div>
 
                 <!-- 视频高级选项 -->
@@ -62,9 +80,14 @@
                         </div>
                     </div>
                 </div>
+
+                <div>
+                    <label class="text-sm font-semibold text-gray-700 block mb-2">3. API 速率限制 (次/分钟)</label>
+                    <input type="number" id="apiRpm" value="60" min="-1" class="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-gray-50" placeholder="-1表示无限制">
+                </div>
                 
                 <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-2">3. 标注指令</label>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">4. 标注指令</label>
                     <textarea id="promptInput" rows="3" class="w-full p-3 border border-gray-300 rounded-lg text-sm" placeholder="例如：追踪视频中的红色汽车..."></textarea>
                 </div>
 
@@ -79,6 +102,21 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                         </svg>
                         <span id="downloadText">下载结果</span>
+                    </button>
+                    <button id="exportAllTransparentBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
+                        导出所有透明图
+                    </button>
+                    <button id="exportAllCropBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
+                        导出所有截取图
+                    </button>
+                    <button id="exportAllTaggedVideosBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
+                        导出所有已标记视频
+                    </button>
+                    <button id="exportBatchImageLabelsBtn" class="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
+                        批量导出图片标注 (YOLO)
+                    </button>
+                    <button id="exportBatchVideoFramesBtn" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
+                        批量导出视频帧与标注
                     </button>
                 </div>
 
@@ -111,7 +149,11 @@
                 <!-- 时间轴结果 -->
                 <div id="timelineResults" class="hidden mt-4">
                     <h3 class="font-bold text-gray-700 mb-2 border-l-4 border-indigo-500 pl-2">追踪结果时间轴</h3>
-                    <div id="timelineContent" class="max-h-60 overflow-y-auto border rounded-lg bg-white divide-y divide-gray-100 text-sm"></div>
+                    <div id="timelineContent" class="max-h-60 overflow-y-auto border rounded-lg bg白 divide-y divide-gray-100 text-sm"></div>
+                </div>
+                <div id="cropPreview" class="hidden mt-4">
+                    <h3 class="font-bold text-gray-700 mb-2 border-l-4 border-emerald-500 pl-2">提取区域预览</h3>
+                    <div id="cropGallery" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>
                 </div>
             </div>
         </div>
@@ -120,6 +162,18 @@
     <canvas id="exportCanvas"></canvas>
 
     <script src="config.js"></script>
+    <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script>
+      window.cvReady = false;
+      if (window.cv) {
+        cv.onRuntimeInitialized = function() {
+          window.cvReady = true;
+          var el = document.getElementById('apiInfo');
+          if (el) el.textContent = 'OpenCV已就绪';
+        };
+      }
+    </script>
     <script src="main.js"></script>
 </body>
 </html>
