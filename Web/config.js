@@ -1,6 +1,6 @@
 const CONFIGS = {
     'gemini-3-flash': {
-        url: '',
+        url: 'https://api.chatanywhere.tech/v1/chat/completions',
         key: 'sk-',
         model: 'gemini-3-flash-preview'
     },
