@@ -8,7 +8,7 @@
 
 - **✨ 更舒服的UI**
   - **UI展示**：
-  <img width="2559" height="1356" alt="image" src="https://github.com/user-attachments/assets/42d1b299-2c5b-429c-a778-17f95c6e82ba" />
+  - <img width="2559" height="1356" alt="image" src="https://github.com/user-attachments/assets/42d1b299-2c5b-429c-a778-17f95c6e82ba" />
   - **做到一半要断网了？**
   - 支持自动备份和手动备份任务，下次可以直接从断点开始，零帧起手
 
