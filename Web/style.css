@@ -75,6 +75,13 @@
     color: #4338ca; /* indigo-700 */
 }
 
+/* Dark mode support */
+.dark .file-item.active {
+    background-color: #312e81; /* indigo-900 */
+    border-left-color: #818cf8; /* indigo-400 */
+    color: #e0e7ff; /* indigo-100 */
+}
+
 /* Custom Scrollbar for file list */
 #fileList::-webkit-scrollbar {
     width: 6px;
@@ -88,4 +95,14 @@
 }
 #fileList::-webkit-scrollbar-thumb:hover {
     background: #9ca3af; 
+}
+
+.dark #fileList::-webkit-scrollbar-track {
+    background: #1f2937; /* gray-800 */
+}
+.dark #fileList::-webkit-scrollbar-thumb {
+    background: #4b5563; /* gray-600 */
+}
+.dark #fileList::-webkit-scrollbar-thumb:hover {
+    background: #6b7280; /* gray-500 */
 }

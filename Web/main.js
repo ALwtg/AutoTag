@@ -30,10 +30,96 @@ const els = {
     get videoTime() { return $('videoTime'); },
 };
 
+// Expose els to global scope for TaskManager
+window.els = els;
+
+// --- Panel Manager (Z-Index) ---
+const PanelManager = {
+    baseZIndex: 50,
+    panels: ['taskMenu', 'cropPreview', 'timelineResults', 'exportMenu'],
+    
+    init() {
+        this.panels.forEach(id => {
+            const el = $(id);
+            if (!el) return;
+            // Set initial z-index to avoid style issues
+            el.style.zIndex = 30; 
+            el.addEventListener('mousedown', () => this.bringToFront(el));
+        });
+
+        const bindings = {
+            'taskMenuBtn': 'taskMenu',
+            'cropPreviewBtn': 'cropPreview',
+            'timelineResultsBtn': 'timelineResults',
+            'exportBtn': 'exportMenu'
+        };
+
+        Object.entries(bindings).forEach(([btnId, panelId]) => {
+            const btn = $(btnId);
+            const panel = $(panelId);
+            if (btn && panel) {
+                // Ensure button click brings panel to front
+                btn.addEventListener('click', (e) => {
+                    // e.stopPropagation(); // Might conflict with existing logic, be careful
+                    // Check if panel became visible
+                    setTimeout(() => {
+                        if (!panel.classList.contains('hidden')) {
+                            this.bringToFront(panel);
+                        }
+                    }, 0);
+                });
+            }
+        });
+    },
+
+    bringToFront(el) {
+        this.baseZIndex++;
+        el.style.zIndex = this.baseZIndex;
+    }
+};
+
+// --- Theme Manager ---
+const ThemeManager = {
+    init() {
+        const btn = $('themeToggleBtn');
+        const sun = $('themeIconSun');
+        const moon = $('themeIconMoon');
+        if (!btn || !sun || !moon) return;
+
+        const isDark = localStorage.getItem('theme') === 'dark';
+        if (isDark) {
+            document.documentElement.classList.add('dark');
+            sun.classList.remove('hidden');
+            moon.classList.add('hidden');
+        } else {
+            document.documentElement.classList.remove('dark');
+            sun.classList.add('hidden');
+            moon.classList.remove('hidden');
+        }
+
+        btn.onclick = () => {
+            document.documentElement.classList.toggle('dark');
+            const isDarkMode = document.documentElement.classList.contains('dark');
+            localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+            
+            if (isDarkMode) {
+                sun.classList.remove('hidden');
+                moon.classList.add('hidden');
+            } else {
+                sun.classList.add('hidden');
+                moon.classList.remove('hidden');
+            }
+        };
+    }
+};
+
 // Toggle Export Menu
 window.toggleExportMenu = function() {
     if (els.exportMenu) {
         els.exportMenu.classList.toggle('hidden');
+        if (!els.exportMenu.classList.contains('hidden')) {
+            PanelManager.bringToFront(els.exportMenu);
+        }
     }
 };
 
@@ -66,6 +152,9 @@ let state = {
     videoScrubbing: false,
     videoFrameCbHandle: null
 };
+
+// Expose state to global scope for TaskManager
+window.state = state;
 
 function formatTime(sec) {
     if (!Number.isFinite(sec) || sec < 0) return '0:00';
@@ -118,6 +207,8 @@ function initModelSelect() {
     });
 }
 
+ThemeManager.init();
+PanelManager.init();
 initModelSelect();
 els.modeToggle.addEventListener('change', toggleMode);
 els.fileInput.addEventListener('change', handleFileSelect);
@@ -311,7 +402,7 @@ function renderFileList() {
 
     state.files.forEach((file, index) => {
         const div = document.createElement('div');
-        div.className = `file-item p-2 text-xs text-gray-600 hover:bg-gray-100 cursor-pointer rounded flex items-center gap-2 transition-colors ${index === state.currentFileIndex ? 'active font-medium' : ''}`;
+        div.className = `file-item p-2 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer rounded flex items-center gap-2 transition-colors ${index === state.currentFileIndex ? 'active font-medium' : ''}`;
         div.onclick = () => switchFile(index);
         
         // Icon
@@ -835,6 +926,7 @@ function updateProgress(pct, text) {
 }
 
 function setLoading(isLoading) {
+    state.isProcessing = isLoading;
     els.startBtn.disabled = isLoading;
     els.loader.style.display = isLoading ? 'block' : 'none';
     els.btnText.innerText = isLoading ? 'AI正在计算...' : '开始分析';
@@ -1000,9 +1092,14 @@ async function processImagesBatch(config) {
     const files = state.files && state.files.length ? state.files : (state.file ? [state.file] : []);
     if (files.length === 0) return;
     const concurrency = 1;
-    state.imageResults = [];
+    // state.imageResults = []; // Modified for resume support
+    if (!state.imageResults) state.imageResults = [];
     
     let completed = 0;
+    if (state.imageResults.length > 0) {
+        const fileNames = new Set(files.map(f => f.name));
+        completed = state.imageResults.filter(r => fileNames.has(r.fileName)).length;
+    }
     const total = files.length;
     // 如果是单文件，允许内部报告详细进度；如果是多文件，禁用内部报告，改用外部计数
     const isSingleFile = total === 1;
@@ -1050,9 +1147,14 @@ async function processVideosBatch(config) {
     const files = state.files && state.files.length ? state.files : (state.file ? [state.file] : []);
     if (files.length === 0) return;
     const concurrency = parseInt(els.parallelCountGlobal && els.parallelCountGlobal.value ? els.parallelCountGlobal.value : '3', 10) || 3;
-    state.videoResults = [];
+    // state.videoResults = []; // Modified for resume support
+    if (!state.videoResults) state.videoResults = [];
     
     let completed = 0;
+    if (state.videoResults.length > 0) {
+        const fileNames = new Set(files.map(f => f.name));
+        completed = state.videoResults.filter(r => fileNames.has(r.fileName)).length;
+    }
     const total = files.length;
     const isSingleFile = total === 1;
 
@@ -1063,7 +1165,8 @@ async function processVideosBatch(config) {
             : null;
 
         const result = await analyzeVideoFile(file, config, onProgress);
-        state.videoResults.push({ fileName: file.name, file, annotations: result.annotations, fps: result.fps });
+        // state.videoResults.push({ fileName: file.name, file, annotations: result.annotations, fps: result.fps });
+        // Result is already updated in state.videoResults by analyzeVideoFile (via partialResult update)
         
         if (!isSingleFile) {
             completed++;
@@ -1078,41 +1181,102 @@ async function processVideosBatch(config) {
 }
 
 async function analyzeVideoFile(file, config, onProgress) {
-    return new Promise(async (resolve) => {
+    return new Promise(async (resolve, reject) => {
         const video = document.createElement('video');
         video.playsInline = true;
         video.muted = true;
+        
+        // Cleanup function
+        const cleanup = () => {
+            if (video.src) URL.revokeObjectURL(video.src);
+            video.remove();
+        };
+
+        video.onerror = (e) => {
+            console.error("Video load error", e);
+            cleanup();
+            resolve({ annotations: [], fps: 0 }); // Resolve empty to continue batch
+        };
+
         video.src = URL.createObjectURL(file);
+        
         video.onloadedmetadata = async () => {
-            const fpsInput = $('frameRate');
-            const fps = fpsInput ? parseFloat(fpsInput.value || '1') : 1;
-            const frames = await extractFrames(video, fps);
-            let allAnns = [];
-            const prompt = els.promptInput.value.trim() || '物体';
-            for (let i = 0; i < frames.length; i++) {
-                let classInstruction = "";
-                if (state.unifiedClassMap.size > 0) {
-                    const classes = getAllClasses();
-                    const classListStr = classes.map((c, i) => `${i}:${c}`).join(',');
-                    classInstruction = `\n请严格优先使用以下已知类别标准名称(ID:名称): [${classListStr}]。`;
-                }
-
-                const res = await callAPI(config, [{ role: "user", content: [
-                    { type: "text", text: `标注${prompt}并返回 JSON: [{"label":"${prompt}", "box_2d":[y1,x1,y2,x2]}]${classInstruction}` },
-                    { type: "image_url", image_url: { url: `data:image/jpeg;base64,${frames[i].base64}` } }
-                ]}]);
+            try {
+                const fpsInput = $('frameRate');
+                const fps = fpsInput ? parseFloat(fpsInput.value || '1') : 1;
+                const frames = await extractFrames(video, fps);
                 
-                // 注册/更新类别ID
-                res.forEach(b => getClassId(b.label));
-
-                const timedRes = res.map(r => ({ ...r, time: frames[i].time }));
-                allAnns.push(...timedRes);
+                let allAnns = [];
+                let startIndex = 0;
                 
-                if (onProgress) {
-                    onProgress(Math.round(((i + 1) / frames.length) * 100), `视频分析中: ${i + 1}/${frames.length} 帧`);
+                // Check for partial results
+                const existingResultIndex = state.videoResults.findIndex(r => r.fileName === file.name);
+                if (existingResultIndex !== -1) {
+                    const existing = state.videoResults[existingResultIndex];
+                    if (existing.annotations && existing.annotations.length > 0) {
+                         const lastTime = existing.annotations[existing.annotations.length - 1].time;
+                         const nextFrameIndex = frames.findIndex(f => f.time > lastTime + 0.01);
+                         if (nextFrameIndex !== -1) {
+                             startIndex = nextFrameIndex;
+                             allAnns = [...existing.annotations];
+                             state.videoResults.splice(existingResultIndex, 1);
+                             if (onProgress) onProgress(Math.round((startIndex / frames.length) * 100), `恢复进度: 从第 ${startIndex + 1} 帧继续...`);
+                         } else {
+                             cleanup();
+                             resolve(existing);
+                             return;
+                         }
+                    }
                 }
+                
+                const prompt = els.promptInput.value.trim() || '物体';
+                
+                const partialResult = { fileName: file.name, file, annotations: allAnns, fps, isPartial: true };
+                state.videoResults.push(partialResult);
+                
+                for (let i = startIndex; i < frames.length; i++) {
+                    while (window.TaskManager && window.TaskManager.isPaused) {
+                        if (window.TaskManager.isStopped) break;
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+                    if (window.TaskManager && window.TaskManager.isStopped) break;
+    
+                    let classInstruction = "";
+                    if (state.unifiedClassMap.size > 0) {
+                        const classes = getAllClasses();
+                        const classListStr = classes.map((c, i) => `${i}:${c}`).join(',');
+                        classInstruction = `\n请严格优先使用以下已知类别标准名称(ID:名称): [${classListStr}]。`;
+                    }
+    
+                    try {
+                        const res = await callAPI(config, [{ role: "user", content: [
+                            { type: "text", text: `标注${prompt}并返回 JSON: [{"label":"${prompt}", "box_2d":[y1,x1,y2,x2]}]${classInstruction}` },
+                            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${frames[i].base64}` } }
+                        ]}]);
+                        
+                        res.forEach(b => getClassId(b.label));
+    
+                        const timedRes = res.map(r => ({ ...r, time: frames[i].time }));
+                        allAnns.push(...timedRes);
+                        
+                        partialResult.annotations = allAnns;
+                        
+                        if (onProgress) {
+                            onProgress(Math.round(((i + 1) / frames.length) * 100), `视频分析中: ${i + 1}/${frames.length} 帧`);
+                        }
+                    } catch (e) {
+                        console.error("Frame analysis failed", e);
+                    }
+                }
+                
+                delete partialResult.isPartial;
+                cleanup();
+                resolve({ annotations: allAnns, fps });
+            } catch (err) {
+                console.error("Video analysis error", err);
+                cleanup();
+                resolve({ annotations: [], fps: 0 });
             }
-            resolve({ annotations: allAnns, fps });
         };
     });
 }
