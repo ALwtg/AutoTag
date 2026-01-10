@@ -6,6 +6,12 @@
 
 ## ✨ 核心特性
 
+- **✨ 更舒服的UI**
+  - **UI展示**：
+  <img width="2559" height="1356" alt="image" src="https://github.com/user-attachments/assets/42d1b299-2c5b-429c-a778-17f95c6e82ba" />
+  - **做到一半要断网了？**
+  - 支持自动备份和手动备份任务，下次可以直接从断点开始，零帧起手
+
 - **🚀 双模式交互**
   - **图片标注模式**：上传图片并描述目标，AI 自动返回带标签的坐标框。  
   - <img width="1720" height="1170" alt="image" src="https://github.com/user-attachments/assets/f4eaab4f-8c11-4dda-b5b1-1f8e4abb06f1" />
