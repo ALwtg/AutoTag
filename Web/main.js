@@ -42,39 +42,61 @@ const PanelManager = {
         this.panels.forEach(id => {
             const el = $(id);
             if (!el) return;
-            // Set initial z-index to avoid style issues
-            el.style.zIndex = 30; 
+            // 任务管理始终置顶，其他面板默认层级
+            el.style.zIndex = (id === 'taskMenu') ? 10000 : 30;
             el.addEventListener('mousedown', () => this.bringToFront(el));
         });
 
-        const bindings = {
-            'taskMenuBtn': 'taskMenu',
-            'cropPreviewBtn': 'cropPreview',
-            'timelineResultsBtn': 'timelineResults',
-            'exportBtn': 'exportMenu'
-        };
+        // 互斥逻辑：剪裁预览 vs 时间轴
+        this.setupToggle('cropPreviewBtn', 'cropPreview', 'timelineResults');
+        this.setupToggle('timelineResultsBtn', 'timelineResults', 'cropPreview');
 
-        Object.entries(bindings).forEach(([btnId, panelId]) => {
-            const btn = $(btnId);
-            const panel = $(panelId);
-            if (btn && panel) {
-                // Ensure button click brings panel to front
-                btn.addEventListener('click', (e) => {
-                    // e.stopPropagation(); // Might conflict with existing logic, be careful
-                    // Check if panel became visible
-                    setTimeout(() => {
-                        if (!panel.classList.contains('hidden')) {
-                            this.bringToFront(panel);
-                        }
-                    }, 0);
-                });
-            }
-        });
+        // 任务管理按钮点击时确保置顶 (显示逻辑在 task_manager.js)
+        const taskBtn = $('taskMenuBtn');
+        const taskMenu = $('taskMenu');
+        if (taskBtn && taskMenu) {
+            taskBtn.addEventListener('click', () => {
+                setTimeout(() => {
+                    if (!taskMenu.classList.contains('hidden')) {
+                        this.bringToFront(taskMenu);
+                    }
+                }, 0);
+            });
+        }
+    },
+
+    setupToggle(btnId, panelId, otherPanelId) {
+        const btn = $(btnId);
+        const panel = $(panelId);
+        const other = $(otherPanelId);
+        
+        if (btn && panel) {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const willShow = panel.classList.contains('hidden');
+                
+                if (willShow) {
+                    panel.classList.remove('hidden');
+                    this.bringToFront(panel);
+                    // 互斥：关闭另一个
+                    if (other && !other.classList.contains('hidden')) {
+                        other.classList.add('hidden');
+                    }
+                } else {
+                    panel.classList.add('hidden');
+                }
+            });
+        }
     },
 
     bringToFront(el) {
-        this.baseZIndex++;
-        el.style.zIndex = this.baseZIndex;
+        if (el.id === 'taskMenu') {
+            // 始终保持最高层级
+            el.style.zIndex = 10000;
+        } else {
+            this.baseZIndex++;
+            el.style.zIndex = this.baseZIndex;
+        }
     }
 };
 
