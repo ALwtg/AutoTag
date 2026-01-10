@@ -7,159 +7,229 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="style.css">
 </head>
-<body class="bg-slate-50 min-h-screen p-4 md:p-8">
-    <div class="max-w-6xl mx-auto bg-white rounded-2xl shadow-xl p-6">
-        <div class="flex items-center gap-3 mb-6 border-b pb-4">
-            <div class="bg-indigo-600 p-2 rounded-lg text-white">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
+<body class="bg-gray-50 h-screen flex flex-col overflow-hidden">
+    <!-- Top Navigation Bar -->
+    <div class="h-16 bg-white border-b border-gray-200 flex items-center px-4 justify-between shrink-0 z-20 shadow-sm">
+        <!-- Left: Logo & Mode -->
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2 text-indigo-600">
+                <div class="bg-indigo-600 p-1.5 rounded-lg text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                </div>
+                <!-- <span class="font-bold text-lg hidden md:block">AutoTag</span> -->
             </div>
-            <h1 class="text-2xl font-bold text-gray-800">AI 视频追踪与图片标注</h1>
+            
+            <!-- Mode Toggle -->
+            <div class="flex items-center bg-gray-100 rounded-full p-1 px-1">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="modeToggle" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-300 peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+                <span class="ml-2 text-xs font-semibold text-gray-600 w-24" id="modeLabel">当前: 图片模式</span>
+            </div>
+
+            <!-- Export Dropdown Trigger (Moved to Left) -->
+            <div class="relative">
+                <button id="exportBtn" class="flex items-center gap-1 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition" onclick="toggleExportMenu()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    <span>导出数据</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </button>
+                 <!-- Dropdown Menu for Exports -->
+                <div id="exportMenu" class="absolute left-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-100 hidden z-50">
+                    <div class="py-1">
+                        <button id="exportAllTransparentBtn" class="block w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">导出所有透明图</button>
+                        <button id="exportAllCropBtn" class="block w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">导出所有截取图</button>
+                        <button id="exportBatchImageLabelsBtn" class="block w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">导出图片标注 (YOLO)</button>
+                        <div class="border-t my-1"></div>
+                        <button id="exportAllTaggedVideosBtn" class="block w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">导出已标记视频</button>
+                        <button id="exportBatchVideoFramesBtn" class="block w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">导出视频帧与标注</button>
+                    </div>
+                </div>
+            </div>
         </div>
-        
-        <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            <!-- 左侧控制区 -->
-            <div class="lg:col-span-1 space-y-5">
-                <!-- 模式切换 -->
-                <div class="flex items-center gap-3 p-3 bg-gray-100 rounded-lg">
-                    <span class="text-sm font-semibold text-gray-700" id="modeLabel">当前: 图片模式</span>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" id="modeToggle" class="sr-only peer">
-                        <div class="w-11 h-6 bg-gray-300 peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                </div>
 
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-2">1. 选择模型</label>
-                    <select id="modelSelect" class="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-gray-50">
-                        <!-- 模型选项将由 JS 动态加载 -->
-                    </select>
-                </div>
+        <!-- Middle: Controls -->
+        <div class="flex items-center gap-3 flex-1 justify-center overflow-x-auto px-4 hide-scrollbar">
+            <!-- Model Select -->
+            <select id="modelSelect" class="w-32 p-1.5 text-xs border border-gray-300 rounded-lg bg-gray-50 focus:ring-indigo-500 focus:border-indigo-500">
+                <!-- Dynamic options -->
+            </select>
 
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-2">2. 上传文件</label>
-                    <input type="file" id="fileInput" accept="image/*" multiple class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer">
-                </div>
+            <!-- Upload Buttons -->
+            <div class="flex gap-2">
+                <label class="cursor-pointer bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    上传文件
+                    <input type="file" id="fileInput" accept="image/*" multiple class="hidden">
+                </label>
                 
-                <div class="mt-2">
-                    <label class="block text-sm font-semibold text-gray-700 mb-2">上传 classes.txt (可选)</label>
-                    <input type="file" id="classesInput" accept=".txt" class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-gray-50 file:text-gray-700 hover:file:bg-gray-100 cursor-pointer">
-                    <p class="text-xs text-gray-400 mt-1">若不上传，将自动生成并维护类别ID。</p>
-                </div>
-                
-                <div class="space-y-2 p-3 bg-gray-100 rounded-lg" id="imageOptions">
-                    <div class="flex items-center gap-2 mb-2">
-                        <input type="checkbox" id="extractTransparent" class="w-4 h-4 text-indigo-600">
-                        <label for="extractTransparent" class="text-xs text-gray-700 font-medium">提取透明图 (消耗算力)</label>
-                    </div>
-                    <div>
-                        <label class="text-xs text-gray-600 block">透明图前置放大倍数</label>
-                        <input type="number" id="scaleFactor" value="4" min="1" step="0.1" class="w-full p-2 border rounded text-sm">
-                    </div>
-                    <div>
-                        <label class="text-xs text-gray-600 block">批量并发数量</label>
-                        <input type="number" id="parallelCountGlobal" value="3" min="1" max="10" class="w-full p-2 border rounded text-sm">
-                    </div>
-                </div>
+                <label class="cursor-pointer bg-gray-100 text-gray-600 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Classes
+                    <input type="file" id="classesInput" accept=".txt" class="hidden">
+                </label>
+            </div>
 
-                <!-- 视频高级选项 -->
-                <div id="videoOptions" class="hidden space-y-3 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
-                    <div class="flex items-center gap-2">
-                        <input type="checkbox" id="manualFrame" class="w-4 h-4 text-indigo-600">
-                        <label for="manualFrame" class="text-sm font-medium">手动抽帧模式 (推荐)</label>
+            <!-- Image Options -->
+            <div id="imageOptions" class="flex items-center gap-3 bg-gray-50 px-2 py-1 rounded-lg border border-gray-200">
+                <div class="flex items-center gap-1.5">
+                    <input type="checkbox" id="extractTransparent" class="w-3.5 h-3.5 text-indigo-600 rounded focus:ring-indigo-500">
+                    <label for="extractTransparent" class="text-xs text-gray-600 whitespace-nowrap">透明图</label>
+                </div>
+                <div class="flex items-center gap-1">
+                    <label class="text-xs text-gray-500">Scale:</label>
+                    <input type="number" id="scaleFactor" value="4" min="1" step="0.1" class="w-12 p-1 text-xs border rounded text-center">
+                </div>
+            </div>
+            
+            <!-- Video Options (Hidden by default) -->
+            <div id="videoOptions" class="hidden flex items-center gap-3 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100">
+                 <div class="flex items-center gap-1.5">
+                    <input type="checkbox" id="manualFrame" class="w-3.5 h-3.5 text-indigo-600 rounded">
+                    <label for="manualFrame" class="text-xs text-indigo-700 whitespace-nowrap">手动抽帧</label>
+                </div>
+                <div id="frameRateDiv" class="hidden flex items-center gap-2 border-l border-indigo-200 pl-2">
+                    <div class="flex items-center gap-1">
+                         <label class="text-xs text-indigo-600">FPS:</label>
+                         <input type="number" id="frameRate" value="1" min="0.1" max="10" step="0.5" class="w-12 p-1 text-xs border border-indigo-200 rounded text-center">
                     </div>
-                    <div id="frameRateDiv" class="hidden pl-6 border-l-2 border-indigo-200">
-                        <div class="mb-2">
-                            <label class="text-xs text-gray-600 block">抽帧频率 (帧/秒)</label>
-                            <input type="number" id="frameRate" value="1" min="0.1" max="10" step="0.5" class="w-full p-1 border rounded text-sm">
-                        </div>
-                        <div>
-                            <label class="text-xs text-gray-600 block">并行请求数 (并发)</label>
-                            <input type="number" id="parallelCount" value="3" min="1" max="10" class="w-full p-1 border rounded text-sm">
-                        </div>
-                    </div>
-                </div>
-
-                <div>
-                    <label class="text-sm font-semibold text-gray-700 block mb-2">3. API 速率限制 (次/分钟)</label>
-                    <input type="number" id="apiRpm" value="60" min="-1" class="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-gray-50" placeholder="-1表示无限制">
-                </div>
-                
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-2">4. 标注指令</label>
-                    <textarea id="promptInput" rows="3" class="w-full p-3 border border-gray-300 rounded-lg text-sm" placeholder="例如：追踪视频中的红色汽车..."></textarea>
-                </div>
-
-                <div class="space-y-2">
-                    <button id="startBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-md">
-                        <span id="btnText">开始分析</span>
-                        <div id="loader" class="loading"></div>
-                    </button>
-                    
-                    <button id="downloadBtn" disabled class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        <span id="downloadText">下载结果</span>
-                    </button>
-                    <button id="exportAllTransparentBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
-                        导出所有透明图
-                    </button>
-                    <button id="exportAllCropBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
-                        导出所有截取图
-                    </button>
-                    <button id="exportAllTaggedVideosBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
-                        导出所有已标记视频
-                    </button>
-                    <button id="exportBatchImageLabelsBtn" class="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
-                        批量导出图片标注 (YOLO)
-                    </button>
-                    <button id="exportBatchVideoFramesBtn" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-xl shadow-md flex items-center justify-center gap-2">
-                        批量导出视频帧与标注
-                    </button>
-                </div>
-
-                <div id="progressContainer" class="hidden">
-                    <div class="flex justify-between text-xs text-gray-600 mb-1">
-                        <span id="progressText">处理中...</span>
-                        <span id="progressPct">0%</span>
-                    </div>
-                    <div class="progress-bar"><div id="progressFill" class="progress-fill" style="width: 0%"></div></div>
                 </div>
             </div>
 
-            <!-- 右侧展示区 -->
-            <div class="lg:col-span-3">
-                <!-- 视图容器 -->
-                <div class="video-wrapper border-2 border-dashed border-gray-300 bg-gray-50 min-h-[300px]" id="viewContainer">
-                    <!-- 图片模式 Canvas -->
-                    <canvas id="imageCanvas" class="max-w-full"></canvas>
-                    
-                    <!-- 视频模式组合 -->
-                    <video id="videoPlayer" class="hidden" controls playsinline crossorigin="anonymous"></video>
-                    <canvas id="overlayCanvas" class="hidden"></canvas>
+            <div class="flex items-center gap-2">
+                <div class="flex items-center gap-1" title="并发数量">
+                    <label class="text-xs text-gray-500">并发:</label>
+                    <input type="number" id="parallelCountGlobal" value="3" min="1" max="10" class="w-10 p-1 text-xs border rounded text-center">
                 </div>
-
-                <div class="flex justify-between items-center mt-3 px-1">
-                    <p id="statusMsg" class="text-sm text-gray-500 italic">等待任务...</p>
-                    <p id="apiInfo" class="text-xs text-gray-400 font-mono"></p>
-                </div>
-
-                <!-- 时间轴结果 -->
-                <div id="timelineResults" class="hidden mt-4">
-                    <h3 class="font-bold text-gray-700 mb-2 border-l-4 border-indigo-500 pl-2">追踪结果时间轴</h3>
-                    <div id="timelineContent" class="max-h-60 overflow-y-auto border rounded-lg bg白 divide-y divide-gray-100 text-sm"></div>
-                </div>
-                <div id="cropPreview" class="hidden mt-4">
-                    <h3 class="font-bold text-gray-700 mb-2 border-l-4 border-emerald-500 pl-2">提取区域预览</h3>
-                    <div id="cropGallery" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>
+                <div class="flex items-center gap-1" title="RPM限制">
+                    <label class="text-xs text-gray-500">RPM:</label>
+                    <input type="number" id="apiRpm" value="60" min="-1" class="w-12 p-1 text-xs border rounded text-center">
                 </div>
             </div>
+
+             <!-- Prompt Input -->
+            <div class="flex-1 max-w-xs">
+                <input type="text" id="promptInput" class="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" placeholder="key / prompt">
+            </div>
+        </div>
+
+        <!-- Right: Actions -->
+        <div class="flex items-center gap-2 ml-2">
+            <button id="startBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-sm font-bold shadow-sm transition whitespace-nowrap flex items-center gap-2">
+                <span id="btnText">开始分析</span>
+                <div id="loader" class="loading w-4 h-4 border-2"></div>
+            </button>
+            
+            <!-- Export Dropdown Trigger (Simplified as a download button for now) -->
+            <!-- Removed original download button since it's moved to left -->
+            <button id="downloadBtn" class="hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+            </button>
+
+            <!-- Theme Toggle -->
+             <button class="p-2 text-gray-400 hover:text-yellow-500 rounded-lg transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+            </button>
         </div>
     </div>
 
-    <canvas id="exportCanvas"></canvas>
+    <!-- Main Content Area -->
+    <div class="flex flex-1 overflow-hidden">
+        <!-- Sidebar: File List -->
+        <div class="w-64 bg-white border-r border-gray-200 flex flex-col shrink-0">
+            <div class="p-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                <span class="font-bold text-gray-700 text-sm">文件列表</span>
+                <span id="fileCount" class="bg-gray-200 text-gray-600 text-xs px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div id="fileList" class="flex-1 overflow-y-auto p-2 space-y-1">
+                <!-- File items will be injected here -->
+                <div class="text-center text-gray-400 text-xs mt-10">暂无文件</div>
+            </div>
+             <!-- Progress Bar (Moved to bottom of sidebar) -->
+            <div id="progressContainer" class="hidden p-3 border-t bg-gray-50">
+                <div class="flex justify-between text-xs text-gray-600 mb-1">
+                    <span id="progressText">处理中...</span>
+                    <span id="progressPct">0%</span>
+                </div>
+                <div class="progress-bar h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                    <div id="progressFill" class="h-full bg-indigo-600 transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Workspace -->
+        <div class="flex-1 bg-gray-100 relative flex flex-col overflow-hidden">
+            <!-- Canvas/Video Area -->
+            <div class="flex-1 p-4 overflow-hidden flex items-center justify-center">
+                 <div class="video-wrapper border-2 border-dashed border-gray-300 shadow-sm rounded-lg relative" id="viewContainer">
+                    <!-- Image Mode Canvas -->
+                    <canvas id="imageCanvas" class="block w-full h-full"></canvas>
+                    
+                    <!-- Video Mode Elements -->
+                    <video id="videoPlayer" class="video-decoder" playsinline crossorigin="anonymous"></video>
+                    <canvas id="overlayCanvas" class="hidden"></canvas>
+                </div>
+            </div>
+
+            <div id="videoControls" class="hidden px-4 pb-3">
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm px-3 py-2 flex items-center gap-3">
+                    <button id="videoPlayBtn" class="shrink-0 px-3 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition">播放</button>
+                    <input id="videoSeek" type="range" min="0" max="0" value="0" step="0.01" class="flex-1 accent-indigo-600">
+                    <div id="videoTime" class="shrink-0 text-xs text-gray-600 font-mono w-28 text-right">0:00 / 0:00</div>
+                </div>
+            </div>
+            
+            <!-- Bottom Status Bar -->
+            <div class="bg-white border-t border-gray-200 p-1 px-4 flex justify-between items-center text-xs text-gray-500 shrink-0">
+                <p id="statusMsg" class="italic truncate max-w-lg">等待任务...</p>
+                <p id="apiInfo" class="font-mono"></p>
+            </div>
+        </div>
+
+        <!-- Right Floating Toolbar (Optional, keeping it simple for now) -->
+        <div class="w-12 bg-white border-l border-gray-200 flex flex-col items-center py-4 gap-4 shrink-0 z-10">
+             <button class="p-2 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition" title="剪裁预览" onclick="document.getElementById('cropPreview').classList.toggle('hidden')">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
+                </svg>
+            </button>
+             <button class="p-2 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition" title="时间轴" onclick="document.getElementById('timelineResults').classList.toggle('hidden')">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+    
+    <!-- Hidden Panels (Absolute positioned or modals) -->
+    <!-- Crop Preview Panel (Floating) -->
+    <div id="cropPreview" class="hidden absolute right-14 top-16 bottom-10 w-64 bg-white shadow-2xl border-l border-gray-200 overflow-y-auto p-3 z-30">
+        <h3 class="font-bold text-gray-700 mb-2 border-l-4 border-emerald-500 pl-2 text-sm">提取区域预览</h3>
+        <div id="cropGallery" class="space-y-3"></div>
+    </div>
+
+    <!-- Timeline Results Panel (Floating) -->
+    <div id="timelineResults" class="hidden absolute right-14 top-16 bottom-10 w-72 bg-white shadow-2xl border-l border-gray-200 overflow-y-auto p-3 z-30">
+        <h3 class="font-bold text-gray-700 mb-2 border-l-4 border-indigo-500 pl-2 text-sm">追踪结果时间轴</h3>
+        <div id="timelineContent" class="space-y-2"></div>
+    </div>
+
+    <canvas id="exportCanvas" class="hidden"></canvas>
 
     <script src="config.js"></script>
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>

@@ -20,8 +20,32 @@ const els = {
     apiInfo: $('apiInfo'), // 新增引用
     timelineResults: $('timelineResults'), timelineContent: $('timelineContent'), cropPreview: $('cropPreview'), cropGallery: $('cropGallery'),
     progress: { box: $('progressContainer'), fill: $('progressFill'), text: $('progressText'), pct: $('progressPct') },
-    exportCanvas: document.createElement('canvas') // 隐藏的离屏Canvas用于处理导出
+    exportCanvas: document.createElement('canvas'), // 隐藏的离屏Canvas用于处理导出
+    get fileList() { return $('fileList'); },
+    get fileCount() { return $('fileCount'); },
+    exportMenu: $('exportMenu'), // 新增
+    get videoControls() { return $('videoControls'); },
+    get videoPlayBtn() { return $('videoPlayBtn'); },
+    get videoSeek() { return $('videoSeek'); },
+    get videoTime() { return $('videoTime'); },
 };
+
+// Toggle Export Menu
+window.toggleExportMenu = function() {
+    if (els.exportMenu) {
+        els.exportMenu.classList.toggle('hidden');
+    }
+};
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    if (els.exportMenu && !els.exportMenu.classList.contains('hidden')) {
+        const btn = $('exportBtn');
+        if (btn && !btn.contains(e.target) && !els.exportMenu.contains(e.target)) {
+            els.exportMenu.classList.add('hidden');
+        }
+    }
+});
 
 // 状态变量
 let state = {
@@ -36,8 +60,51 @@ let state = {
     unifiedClassMap: new Map(), // label -> id
     nextClassId: 0,
     customClassesLoaded: false,
-    apiHistory: [] // 记录API请求时间戳
+    apiHistory: [], // 记录API请求时间戳
+    imageRect: null,
+    videoRect: null,
+    videoScrubbing: false,
+    videoFrameCbHandle: null
 };
+
+function formatTime(sec) {
+    if (!Number.isFinite(sec) || sec < 0) return '0:00';
+    const s = Math.floor(sec);
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function syncVideoControls() {
+    const seek = els.videoSeek;
+    const timeEl = els.videoTime;
+    const btn = els.videoPlayBtn;
+    if (!seek || !timeEl || !btn) return;
+    const dur = els.videoPlayer.duration;
+    if (Number.isFinite(dur) && dur > 0) {
+        seek.max = String(dur);
+    }
+    if (!state.videoScrubbing) {
+        seek.value = String(els.videoPlayer.currentTime || 0);
+    }
+    timeEl.textContent = `${formatTime(els.videoPlayer.currentTime || 0)} / ${formatTime(dur || 0)}`;
+    btn.textContent = els.videoPlayer.paused ? '播放' : '暂停';
+}
+
+function drawVideoFrame() {
+    if (!state.isVideoMode) return;
+    if (els.videoPlayer.readyState < 2) return;
+    ensureViewCanvasesSize();
+    const rect = computeContainRect(els.videoPlayer.videoWidth, els.videoPlayer.videoHeight, els.imageCanvas.width, els.imageCanvas.height);
+    state.videoRect = rect;
+    const ctx = els.imageCanvas.getContext('2d');
+    ctx.clearRect(0, 0, els.imageCanvas.width, els.imageCanvas.height);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, els.imageCanvas.width, els.imageCanvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(els.videoPlayer, rect.x, rect.y, rect.w, rect.h);
+}
 
 // --- 初始化 ---
 function initModelSelect() {
@@ -61,8 +128,45 @@ if (els.exportBatchImageLabelsBtn) els.exportBatchImageLabelsBtn.addEventListene
 if (els.exportBatchVideoFramesBtn) els.exportBatchVideoFramesBtn.addEventListener('click', exportBatchVideoFrames);
 if (els.exportAllCropBtn) els.exportAllCropBtn.addEventListener('click', exportAllCroppedImages);
 if (els.exportAllTaggedVideosBtn) els.exportAllTaggedVideosBtn.addEventListener('click', exportAllTaggedVideos);
-els.videoPlayer.addEventListener('play', () => { requestAnimationFrame(videoLoop); });
-els.videoPlayer.addEventListener('seeked', drawVideoOverlay);
+els.videoPlayer.addEventListener('play', () => { syncVideoControls(); requestAnimationFrame(videoLoop); });
+els.videoPlayer.addEventListener('pause', syncVideoControls);
+els.videoPlayer.addEventListener('loadedmetadata', () => { updateVideoLayout(); syncVideoControls(); drawVideoFrame(); drawVideoOverlay(); });
+els.videoPlayer.addEventListener('timeupdate', syncVideoControls);
+els.videoPlayer.addEventListener('seeked', () => { drawVideoFrame(); drawVideoOverlay(); syncVideoControls(); });
+if (els.videoPlayBtn) {
+    els.videoPlayBtn.addEventListener('click', async () => {
+        if (els.videoPlayer.paused) {
+            await els.videoPlayer.play();
+        } else {
+            els.videoPlayer.pause();
+        }
+        syncVideoControls();
+    });
+}
+if (els.videoSeek) {
+    els.videoSeek.addEventListener('input', () => {
+        state.videoScrubbing = true;
+        const t = parseFloat(els.videoSeek.value || '0') || 0;
+        els.videoPlayer.currentTime = t;
+        drawVideoFrame();
+        drawVideoOverlay();
+        syncVideoControls();
+    });
+    els.videoSeek.addEventListener('change', () => {
+        state.videoScrubbing = false;
+        syncVideoControls();
+    });
+}
+window.addEventListener('resize', () => {
+    if (state.isVideoMode) {
+        updateVideoLayout();
+        drawVideoFrame();
+        drawVideoOverlay();
+    } else {
+        updateImageLayout();
+        renderAllAnnotations();
+    }
+});
 // 初始化时执行一次模式切换逻辑，确保按钮状态正确
 toggleMode();
 
@@ -79,10 +183,10 @@ function toggleMode() {
     els.modeLabel.textContent = state.isVideoMode ? '当前: 视频模式' : '当前: 图片模式';
     els.fileInput.accept = state.isVideoMode ? 'video/*' : 'image/*';
     els.videoOptions.classList.toggle('hidden', !state.isVideoMode);
-    els.imageCanvas.classList.toggle('hidden', state.isVideoMode);
-    els.videoPlayer.classList.toggle('hidden', !state.isVideoMode);
+    els.imageCanvas.classList.remove('hidden');
     els.overlayCanvas.classList.remove('hidden');
     els.timelineResults.classList.add('hidden');
+    if (els.videoControls) els.videoControls.classList.toggle('hidden', !state.isVideoMode);
     
     // UI 显隐控制
     if (state.isVideoMode) {
@@ -114,34 +218,176 @@ function toggleMode() {
     state.files = [];
     state.imageResults = [];
     state.videoResults = [];
+    renderFileList(); // Clear UI list
     els.statusMsg.textContent = '模式已切换';
+
+    if (!state.isVideoMode) {
+        try {
+            els.videoPlayer.pause();
+        } catch {}
+        els.videoPlayer.removeAttribute('src');
+        els.videoPlayer.load();
+        state.videoRect = null;
+        state.videoFrameCbHandle = null;
+        updateImageLayout();
+        renderAllAnnotations();
+    } else {
+        state.img = null;
+        state.imageRect = null;
+        updateVideoLayout();
+        drawVideoFrame();
+        drawVideoOverlay();
+        syncVideoControls();
+    }
 }
 
 function handleFileSelect(e) {
     const selected = Array.from(e.target.files || []);
     if (selected.length === 0) return;
     state.files = selected;
-    state.file = selected[0];
+    state.currentFileIndex = 0;
+    renderFileList();
+    switchFile(0);
+}
+
+function getViewSize() {
+    const container = $('viewContainer');
+    if (!container) return { w: 960, h: 540 };
+    const w = Math.max(1, Math.floor(container.clientWidth || container.getBoundingClientRect().width));
+    const h = Math.max(1, Math.floor(container.clientHeight || container.getBoundingClientRect().height));
+    return { w, h };
+}
+
+function computeContainRect(srcW, srcH, dstW, dstH) {
+    const sw = Math.max(1, srcW || 1);
+    const sh = Math.max(1, srcH || 1);
+    const scale = Math.min(dstW / sw, dstH / sh);
+    const w = sw * scale;
+    const h = sh * scale;
+    const x = (dstW - w) / 2;
+    const y = (dstH - h) / 2;
+    return { x, y, w, h, scale };
+}
+
+function ensureViewCanvasesSize() {
+    const { w, h } = getViewSize();
+    if (els.imageCanvas.width !== w) els.imageCanvas.width = w;
+    if (els.imageCanvas.height !== h) els.imageCanvas.height = h;
+    if (els.overlayCanvas.width !== w) els.overlayCanvas.width = w;
+    if (els.overlayCanvas.height !== h) els.overlayCanvas.height = h;
+}
+
+function updateImageLayout() {
+    ensureViewCanvasesSize();
+    if (!state.img) return;
+    const { w, h } = getViewSize();
+    state.imageRect = computeContainRect(state.img.width, state.img.height, w, h);
+    resetImageDisplay();
+}
+
+function updateVideoLayout() {
+    ensureViewCanvasesSize();
+    const vw = els.videoPlayer.videoWidth;
+    const vh = els.videoPlayer.videoHeight;
+    if (!vw || !vh) return;
+    const { w, h } = getViewSize();
+    state.videoRect = computeContainRect(vw, vh, w, h);
+    els.videoPlayer.style.width = '100%';
+    els.videoPlayer.style.height = '100%';
+    els.videoPlayer.style.objectFit = 'contain';
+}
+
+function renderFileList() {
+    const list = els.fileList;
+    if (!list) return;
+
+    list.innerHTML = '';
+    if (els.fileCount) els.fileCount.textContent = state.files.length;
+    
+    if (state.files.length === 0) {
+        list.innerHTML = '<div class="text-center text-gray-400 text-xs mt-10">暂无文件</div>';
+        return;
+    }
+
+    state.files.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = `file-item p-2 text-xs text-gray-600 hover:bg-gray-100 cursor-pointer rounded flex items-center gap-2 transition-colors ${index === state.currentFileIndex ? 'active font-medium' : ''}`;
+        div.onclick = () => switchFile(index);
+        
+        // Icon
+        const icon = state.isVideoMode ? 
+            `<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>` :
+            `<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>`;
+            
+        div.innerHTML = `
+            ${icon}
+            <span class="truncate flex-1">${file.name}</span>
+        `;
+        list.appendChild(div);
+    });
+}
+
+function switchFile(index) {
+    if (index < 0 || index >= state.files.length) return;
+    state.currentFileIndex = index;
+    state.file = state.files[index];
+    
+    // Update UI active state
+    const list = els.fileList;
+    if (list) {
+        const items = list.querySelectorAll('.file-item');
+        items.forEach((item, i) => {
+            if (i === index) {
+                item.classList.add('active', 'font-medium');
+            } else {
+                item.classList.remove('active', 'font-medium');
+            }
+        });
+    }
 
     if (state.isVideoMode) {
         els.videoPlayer.src = URL.createObjectURL(state.file);
+        els.videoPlayer.pause();
         els.videoPlayer.onloadedmetadata = () => {
-            els.overlayCanvas.width = els.videoPlayer.videoWidth;
-            els.overlayCanvas.height = els.videoPlayer.videoHeight;
+            updateVideoLayout();
+            els.videoPlayer.currentTime = 0;
+            syncVideoControls();
+            requestAnimationFrame(() => {
+                drawVideoFrame();
+                drawVideoOverlay();
+            });
+            const octx = els.overlayCanvas.getContext('2d');
+            octx.clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
         };
+        // Clear image canvas
+        const ctx = els.imageCanvas.getContext('2d');
+        ctx.clearRect(0, 0, els.imageCanvas.width, els.imageCanvas.height);
+        // Also clear overlays
+        const octx = els.overlayCanvas.getContext('2d');
+        octx.clearRect(0,0,els.overlayCanvas.width,els.overlayCanvas.height);
+        
+        // If we have results for this video, maybe show them?
+        // But video results are frame-based, hard to show on load.
     } else {
         const reader = new FileReader();
         reader.onload = ev => {
             const img = new Image();
             img.onload = () => {
                 state.img = img;
-                els.imageCanvas.width = img.width;
-                els.imageCanvas.height = img.height;
-                els.overlayCanvas.width = img.width;
-                els.overlayCanvas.height = img.height;
-                resetImageDisplay();
+                updateImageLayout();
                 const octx = els.overlayCanvas.getContext('2d');
                 octx.clearRect(0,0,els.overlayCanvas.width,els.overlayCanvas.height);
+                
+                // If we have results for this image, restore them
+                // Note: The original restoreAndGoTo logic used imageResults index.
+                // Here we match by file name or just use current index if consistent.
+                const result = state.imageResults.find(r => r.fileName === state.file.name);
+                if (result) {
+                    state.annotations = result.annotations;
+                    state.annotations.forEach(ann => drawStyledAnnotation(octx, ann, els.overlayCanvas.width, els.overlayCanvas.height, state.imageRect));
+                } else {
+                    state.annotations = [];
+                }
             };
             img.src = ev.target.result;
         };
@@ -190,7 +436,13 @@ function getAllClasses() {
 function resetImageDisplay() {
     if (!state.img) return;
     const ctx = els.imageCanvas.getContext('2d');
-    ctx.drawImage(state.img, 0, 0);
+    const { width: w, height: h } = els.imageCanvas;
+    ctx.clearRect(0, 0, w, h);
+    const rect = state.imageRect || computeContainRect(state.img.width, state.img.height, w, h);
+    state.imageRect = rect;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(state.img, rect.x, rect.y, rect.w, rect.h);
 }
 
 // --- 核心分析逻辑 ---
@@ -238,10 +490,11 @@ function renderAllAnnotations() {
     resetImageDisplay();
     const ctx = els.overlayCanvas.getContext('2d');
     ctx.clearRect(0,0,els.overlayCanvas.width,els.overlayCanvas.height);
-    state.annotations.forEach(ann => drawStyledAnnotation(ctx, ann, els.overlayCanvas.width, els.overlayCanvas.height));
+    state.annotations.forEach(ann => drawStyledAnnotation(ctx, ann, els.overlayCanvas.width, els.overlayCanvas.height, state.imageRect));
 }
 
-function drawStyledAnnotation(ctx, ann, w, h) {
+function drawStyledAnnotation(ctx, ann, w, h, rect) {
+    const contentRect = rect || { x: 0, y: 0, w, h, scale: 1 };
     const hash = ann.label.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
     const color = `hsl(${hash % 360}, 70%, 50%)`;
 
@@ -252,8 +505,8 @@ function drawStyledAnnotation(ctx, ann, w, h) {
     if (ann.polygon && ann.polygon.length > 2) {
         ctx.beginPath();
         ann.polygon.forEach((pt, i) => {
-            const y = (pt[0] / 1000) * h;
-            const x = (pt[1] / 1000) * w;
+            const y = contentRect.y + (pt[0] / 1000) * contentRect.h;
+            const x = contentRect.x + (pt[1] / 1000) * contentRect.w;
             if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         });
         ctx.closePath();
@@ -261,15 +514,21 @@ function drawStyledAnnotation(ctx, ann, w, h) {
         ctx.stroke();
     } else if (ann.box_2d) {
         const [ymin, xmin, ymax, xmax] = ann.box_2d;
-        const rx = (xmin/1000)*w, ry = (ymin/1000)*h, rw = ((xmax-xmin)/1000)*w, rh = ((ymax-ymin)/1000)*h;
+        const rx = contentRect.x + (xmin/1000)*contentRect.w;
+        const ry = contentRect.y + (ymin/1000)*contentRect.h;
+        const rw = ((xmax-xmin)/1000)*contentRect.w;
+        const rh = ((ymax-ymin)/1000)*contentRect.h;
         ctx.strokeRect(rx, ry, rw, rh);
     }
     
     // 绘制标签背景
+    if (!ann.box_2d) return;
     ctx.fillStyle = color;
-    ctx.fillRect((ann.box_2d[1]/1000)*w, (ann.box_2d[0]/1000)*h - 25, ann.label.length * 10 + 20, 25);
+    const labelX = contentRect.x + (ann.box_2d[1]/1000)*contentRect.w;
+    const labelY = contentRect.y + (ann.box_2d[0]/1000)*contentRect.h - 25;
+    ctx.fillRect(labelX, labelY, ann.label.length * 10 + 20, 25);
     ctx.fillStyle = "#fff";
-    ctx.fillText(ann.label, (ann.box_2d[1]/1000)*w + 5, (ann.box_2d[0]/1000)*h - 7);
+    ctx.fillText(ann.label, labelX + 5, labelY + 18);
 }
 
 // --- 导出逻辑：时间轴与结果列表 ---
@@ -338,17 +597,13 @@ window.restoreAndGoTo = function(fileIndex, annIndex) {
             state.img = img;
             state.file = item.file; // 恢复当前文件引用
             state.annotations = item.annotations; // 恢复当前标注集
-            els.imageCanvas.width = img.width;
-            els.imageCanvas.height = img.height;
-            els.overlayCanvas.width = img.width;
-            els.overlayCanvas.height = img.height;
-            resetImageDisplay();
+            updateImageLayout();
             
             // 绘制高亮
             const octx = els.overlayCanvas.getContext('2d');
             octx.clearRect(0,0,els.overlayCanvas.width,els.overlayCanvas.height);
             // 绘制所有
-            state.annotations.forEach(ann => drawStyledAnnotation(octx, ann, els.overlayCanvas.width, els.overlayCanvas.height));
+            state.annotations.forEach(ann => drawStyledAnnotation(octx, ann, els.overlayCanvas.width, els.overlayCanvas.height, state.imageRect));
             
             // 高亮选中的（可选）
             const ann = state.annotations[annIndex];
@@ -395,7 +650,10 @@ async function exportResult(index, mode) {
     // 如果是视频，先跳转到对应时间并抓取当前视频帧
     if (state.isVideoMode) {
         els.videoPlayer.currentTime = ann.time;
-        await new Promise(r => els.videoPlayer.onseeked = r);
+        await new Promise(r => {
+            const handler = () => r();
+            els.videoPlayer.addEventListener('seeked', handler, { once: true });
+        });
         source = els.videoPlayer;
     } else {
         source = state.img;
@@ -472,16 +730,31 @@ function drawVideoOverlay() {
     const ctx = els.overlayCanvas.getContext('2d');
     const w = els.overlayCanvas.width, h = els.overlayCanvas.height;
     ctx.clearRect(0,0,w,h);
+    if (!state.videoRect) updateVideoLayout();
     
     // 找出当前时间附近的标注
     const now = els.videoPlayer.currentTime;
     const currentAnns = state.annotations.filter(a => Math.abs(a.time - now) < 0.5);
-    currentAnns.forEach(ann => drawStyledAnnotation(ctx, ann, w, h));
+    currentAnns.forEach(ann => drawStyledAnnotation(ctx, ann, w, h, state.videoRect));
 }
 
 function videoLoop() {
     if (els.videoPlayer.paused || els.videoPlayer.ended) return;
+    const v = els.videoPlayer;
+    if (typeof v.requestVideoFrameCallback === 'function') {
+        v.requestVideoFrameCallback(() => {
+            if (!state.isVideoMode) return;
+            if (v.paused || v.ended) return;
+            drawVideoFrame();
+            drawVideoOverlay();
+            syncVideoControls();
+            videoLoop();
+        });
+        return;
+    }
+    drawVideoFrame();
     drawVideoOverlay();
+    syncVideoControls();
     requestAnimationFrame(videoLoop);
 }
 
@@ -742,11 +1015,7 @@ async function processImagesBatch(config) {
                 const img = new Image();
                 img.onload = () => {
                     state.img = img;
-                    els.imageCanvas.width = img.width;
-                    els.imageCanvas.height = img.height;
-                    els.overlayCanvas.width = img.width;
-                    els.overlayCanvas.height = img.height;
-                    resetImageDisplay();
+                    updateImageLayout();
                     resolve();
                 };
                 img.src = ev.target.result;
