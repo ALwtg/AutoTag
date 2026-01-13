@@ -1,0 +1,54 @@
+name: AutoTag Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_zip:
+        description: 'Path to the exported package zip (relative to repo root). If provided, it overrides individual files.'
+        required: false
+        default: 'autotag_package.zip'
+      media_zip:
+        description: 'Path to media zip file (ignored if package_zip exists)'
+        required: false
+        default: 'media.zip'
+      config_file:
+        description: 'Path to config file (ignored if package_zip exists)'
+        required: false
+        default: 'workflow_config.json'
+      api_key:
+        description: 'API Key (Optional, overrides secret)'
+        required: false
+  push:
+    paths:
+      - 'workflow_config.json'
+      - 'media.zip'
+      - '*.zip' # Trigger on any zip change in root, covering the package zip
+
+jobs:
+  run-autotag:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Install Dependencies
+      run: npm install puppeteer jszip http-server
+
+    - name: Run AutoTag
+      env:
+        # Priority: Workflow Input > GitHub Secret
+        API_KEY: ${{ github.event.inputs.api_key || secrets.GEMINI_API_KEY }}
+      run: |
+        node .github/scripts/run_autotag.js "${{ github.event.inputs.package_zip || 'autotag_package.zip' }}" "${{ github.event.inputs.media_zip || 'media.zip' }}" "${{ github.event.inputs.config_file || 'workflow_config.json' }}" "output"
+
+    - name: Upload Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: autotag-results
+        path: output/

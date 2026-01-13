@@ -1,0 +1,8 @@
+{
+  "model": "gemini-3-flash",
+  "prompt": "person",
+  "mode": "image",
+  "exportFormat": "yolo, crop",
+  "scaleFactor": "4",
+  "apiRpm": "60"
+}

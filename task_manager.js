@@ -18,6 +18,7 @@ const TaskManager = {
         const taskMenuBtn = document.getElementById('taskMenuBtn');
         const taskMenu = document.getElementById('taskMenu');
         const exportTaskBtn = document.getElementById('exportTaskBtn');
+        const exportGitHubBtn = document.getElementById('exportGitHubBtn');
         const importInput = document.getElementById('importTaskInput');
         const backupIntervalInput = document.getElementById('autoBackupInterval');
         const backupEnabledInput = document.getElementById('autoBackupEnabled');
@@ -29,6 +30,31 @@ const TaskManager = {
             this.exportTask(false);
             taskMenu.classList.add('hidden');
         };
+        if (exportGitHubBtn) exportGitHubBtn.onclick = () => {
+            this.showGitHubExportModal();
+        };
+        
+        // Modal buttons
+        const confirmExportBtn = document.getElementById('confirmExportBtn');
+        const cancelExportBtn = document.getElementById('cancelExportBtn');
+        const githubExportModal = document.getElementById('githubExportModal');
+
+        if (confirmExportBtn) confirmExportBtn.onclick = () => {
+            this.confirmGitHubExport();
+        };
+
+        if (cancelExportBtn) cancelExportBtn.onclick = () => {
+            if (githubExportModal) githubExportModal.classList.add('hidden');
+        };
+
+        // Close modal when clicking outside
+        if (githubExportModal) {
+            githubExportModal.addEventListener('click', (e) => {
+                if (e.target === githubExportModal) {
+                    githubExportModal.classList.add('hidden');
+                }
+            });
+        }
         
         if (taskMenuBtn && taskMenu) {
             taskMenuBtn.onclick = (e) => {
@@ -271,6 +297,7 @@ const TaskManager = {
                 model: els.modelSelect.value,
                 prompt: els.promptInput.value,
                 scaleFactor: els.scaleFactor.value,
+                frameRate: document.getElementById('frameRate') ? document.getElementById('frameRate').value : '1',
                 apiRpm: els.apiRpm.value,
                 parallelCount: els.parallelCountGlobal.value,
                 results: state.isVideoMode ? state.videoResults : state.imageResults
@@ -340,6 +367,14 @@ const TaskManager = {
             els.modelSelect.value = taskConfig.model || els.modelSelect.value;
             els.promptInput.value = taskConfig.prompt || '';
             if (taskConfig.scaleFactor) els.scaleFactor.value = taskConfig.scaleFactor;
+            if (taskConfig.frameRate) {
+                const fpsInput = document.getElementById('frameRate');
+                if (fpsInput) fpsInput.value = taskConfig.frameRate;
+            } else if (taskConfig.mode === 'video' && taskConfig.results && taskConfig.results.length > 0 && taskConfig.results[0].fps) {
+                // 向后兼容：尝试从已有结果中恢复 FPS
+                const fpsInput = document.getElementById('frameRate');
+                if (fpsInput) fpsInput.value = taskConfig.results[0].fps;
+            }
             if (taskConfig.apiRpm) els.apiRpm.value = taskConfig.apiRpm;
             if (taskConfig.parallelCount) els.parallelCountGlobal.value = taskConfig.parallelCount;
 
@@ -405,6 +440,158 @@ const TaskManager = {
             console.error('Import failed', e);
             alert('导入任务失败: ' + e.message);
             els.statusMsg.textContent = '导入失败';
+        }
+    },
+
+    showGitHubExportModal() {
+        if (!state.files || state.files.length === 0) {
+            alert('没有可导出的文件');
+            return;
+        }
+
+        const modal = document.getElementById('githubExportModal');
+        const modeLabel = document.getElementById('exportModeLabel');
+        const optionsList = document.getElementById('exportOptionsList');
+        const taskMenu = document.getElementById('taskMenu');
+
+        if (taskMenu) taskMenu.classList.add('hidden');
+        
+        modeLabel.textContent = state.isVideoMode ? '视频模式' : '图片模式';
+        optionsList.innerHTML = '';
+
+        const options = state.isVideoMode ? [
+            { id: 'original', label: '原视频 (Original Videos)', desc: '未处理的原始视频文件' },
+            { id: 'tracked_video', label: '带有标记框的追踪视频 (Tracked Videos)', desc: '包含 AI 识别框和追踪ID的渲染视频' },
+            { id: 'frames', label: '视频抽帧图片 (Extracted Frames)', desc: '按帧率提取的原始图片序列' },
+            { id: 'yolo_txt', label: '帧标记文件 (YOLO Labels .txt)', desc: '对应每一帧的 YOLO 格式标记文件' },
+            { id: 'classes', label: '类别文件 (classes.txt)', desc: '包含所有识别类别的列表' }
+        ] : [
+            { id: 'original', label: '原图片 (Original Images)', desc: '未处理的原始图片文件' },
+            { id: 'tagged', label: '带有标记框的图片 (Tagged Images)', desc: '包含 AI 识别框的渲染图片' },
+            { id: 'crop', label: '裁剪预览图片 (Cropped Objects)', desc: '根据识别框裁剪出的单个目标图片' },
+            { id: 'transparent', label: '透明底图片 (Transparent Objects)', desc: '去除背景的单个目标 PNG 图片' },
+            { id: 'yolo_txt', label: 'YOLO 标记文件 (YOLO Labels .txt)', desc: '标准 YOLO 格式的坐标标记文件' },
+            { id: 'classes', label: '类别文件 (classes.txt)', desc: '包含所有识别类别的列表' }
+        ];
+
+        options.forEach(opt => {
+            const div = document.createElement('div');
+            div.className = 'flex items-start gap-2 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition cursor-pointer';
+            
+            // Auto check default useful ones
+            const isChecked = ['yolo_txt', 'classes'].includes(opt.id);
+            
+            div.innerHTML = `
+                <input type="checkbox" id="opt_${opt.id}" value="${opt.id}" class="mt-1 w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500" ${isChecked ? 'checked' : ''}>
+                <label for="opt_${opt.id}" class="cursor-pointer">
+                    <div class="text-sm font-medium text-gray-700 dark:text-gray-200">${opt.label}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400">${opt.desc}</div>
+                </label>
+            `;
+            optionsList.appendChild(div);
+        });
+
+        modal.classList.remove('hidden');
+    },
+
+    async confirmGitHubExport() {
+        const modal = document.getElementById('githubExportModal');
+        const checkboxes = modal.querySelectorAll('input[type="checkbox"]:checked');
+        const selected = Array.from(checkboxes).map(cb => cb.value);
+
+        if (selected.length === 0) {
+            alert('请至少选择一种导出格式');
+            return;
+        }
+
+        modal.classList.add('hidden');
+        
+        // Use comma separated string for backward compatibility with prompt input logic
+        // But run_autotag.js logic will need to handle these specific keys
+        const formatStr = selected.join(',');
+        
+        await this.exportGitHubPackage(formatStr);
+    },
+
+    async exportGitHubPackage(formatStr) {
+        if (!state.files || state.files.length === 0) {
+            alert('没有可导出的文件');
+            return;
+        }
+        
+        // If formatStr is not passed (called directly), use prompt (fallback)
+        let format = formatStr;
+        if (!format) {
+             format = prompt("请输入工作流导出格式 (yolo, video, crop, transparent):", "yolo");
+             if (!format) return;
+        }
+        
+        const statusMsg = els.statusMsg.textContent;
+        els.statusMsg.textContent = '正在打包 GitHub 工作流数据...';
+        
+        try {
+            const zip = new JSZip();
+            
+            // 1. workflow_config.json
+            const config = {
+                model: els.modelSelect.value,
+                prompt: els.promptInput.value,
+                mode: state.isVideoMode ? 'video' : 'image',
+                exportFormat: format,
+                scaleFactor: els.scaleFactor.value,
+                apiRpm: els.apiRpm.value,
+                parallelCount: els.parallelCountGlobal.value
+            };
+            zip.file("workflow_config.json", JSON.stringify(config, null, 2));
+            
+            // 2. media.zip
+            const mediaZip = new JSZip();
+            for (const file of state.files) {
+                mediaZip.file(file.name, file);
+            }
+            const mediaZipBlob = await mediaZip.generateAsync({ type: "blob" });
+            zip.file("media.zip", mediaZipBlob);
+            
+            // Generate final zip
+            const content = await zip.generateAsync({ type: "blob" });
+            
+            // 为了方便用户，我们不直接下载 zip，而是建议用户解压
+            // 但浏览器只能下载文件。
+            // 我们可以提示用户：下载后请解压并将内部文件直接放入 GitHub 仓库根目录。
+            // 或者，我们可以生成一个说明文件。
+            zip.file("README_FOR_GITHUB.txt", "请将本压缩包内的 media.zip 和 workflow_config.json 解压并上传到您的 GitHub 仓库根目录。");
+            
+            // 实际上，用户希望“直接把导出的压缩包放在根目录”
+            // 这意味着用户希望导出的结构就是 { workflow_config.json, media.zip }
+            // 这样解压后就是这两个文件。
+            // 我们当前生成的 zip 结构正是如此：
+            // root/
+            //   workflow_config.json
+            //   media.zip
+            
+            // 如果用户是指在本地开发环境中“直接放在根目录”，由于浏览器安全限制，我们无法直接写入用户磁盘的特定路径。
+            // 我们只能触发下载，用户需要手动移动。
+            
+            // 但如果用户觉得“解压再放”繁琐，可能是希望导出的 zip 能够直接被 Action 识别？
+            // GitHub Action 目前配置是读取根目录下的 config 和 media.zip。
+            // 如果用户上传整个 zip 到仓库，Action 需要先解压。
+            // 我们可以修改 Action 逻辑，支持读取一个打包好的 zip。
+            
+            // 不过，通常 Git 仓库管理是基于文件的。
+            // 用户将 `autotag_package.zip` 提交到仓库根目录？
+            // 如果是这样，我们需要修改 workflow.yml 来处理这个 zip。
+            
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(content);
+            a.download = `autotag_github_package_${Date.now()}.zip`;
+            a.click();
+            
+            els.statusMsg.textContent = 'GitHub 包导出完成';
+        } catch (e) {
+            console.error(e);
+            els.statusMsg.textContent = '导出失败: ' + e.message;
+        } finally {
+            setTimeout(() => els.statusMsg.textContent = statusMsg, 2000);
         }
     }
 };
