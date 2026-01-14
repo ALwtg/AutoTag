@@ -11,23 +11,25 @@ let mediaZipPath = (args[1] && args[1] !== "") ? args[1] : 'media.zip';
 let configPath = (args[2] && args[2] !== "") ? args[2] : 'workflow_config.json';
 let outputDir = (args[3] && args[3] !== "") ? args[3] : 'output';
 
-// Environment Variables
 const API_KEY = process.env.API_KEY;
 
 (async () => {
     let server = null;
     let browser = null;
     const tempFilesDir = path.resolve('temp_extracted_media');
+    const rootDir = process.cwd(); // 确保获取当前工作目录
 
     try {
-        console.log('--- Configuration ---');
-        console.log(`Package Zip: ${packageZipPath}`);
-        console.log(`Media Zip: ${mediaZipPath}`);
-        console.log(`Config Path: ${configPath}`);
-        console.log(`Output Dir: ${outputDir}`);
-        console.log('---------------------');
+        console.log('--- Environment Check ---');
+        console.log('Working Directory:', rootDir);
+        // 核心：检查关键文件是否存在，防止 404
+        ['index.html', 'config.js', 'main.js', 'task_manager.js'].forEach(file => {
+            const exists = fs.existsSync(path.join(rootDir, file));
+            console.log(`File ${file} exists: ${exists}`);
+            if (!exists) console.error(`CRITICAL ERROR: ${file} is missing in the workspace!`);
+        });
 
-        // 1. 提取包文件 (如果用户上传的是一个整合包)
+        // 1. 提取包逻辑保持不变...
         if (fs.existsSync(packageZipPath)) {
             const packageData = fs.readFileSync(packageZipPath);
             const packageZip = await JSZip.loadAsync(packageData);
@@ -48,17 +50,16 @@ const API_KEY = process.env.API_KEY;
             process.exit(1);
         }
 
-        // 2. 准备任务包 (注入到浏览器执行)
+        // 2. 准备任务包
         console.log('Preparing task package...');
         const userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         const mediaZipData = fs.readFileSync(mediaZipPath);
         const taskZip = new JSZip();
         
-        // 注意：这里的 model 存储的是映射名/键名，如 'gemini_3_flash_X666_'
         const taskConfig = {
             timestamp: Date.now(),
             mode: userConfig.mode || 'image',
-            model: userConfig.model || 'gemini_3_flash', // 这里的 model 对应 CONFIGS 的 key
+            model: userConfig.model || 'gemini_3_flash',
             prompt: userConfig.prompt || '',
             scaleFactor: userConfig.scaleFactor || '4',
             apiRpm: userConfig.apiRpm || '60',
@@ -87,165 +88,134 @@ const API_KEY = process.env.API_KEY;
         const importZipPath = path.resolve('temp_import_task.zip');
         fs.writeFileSync(importZipPath, importZipBuffer);
 
-        // 3. 启动本地静态服务器
-        server = createServer({ root: '.' });
-        server.listen(8080);
+        // 3. 启动静态服务器 (使用 127.0.0.1 避免某些 CI 下的 localhost 解析问题)
+        server = createServer({ root: rootDir, cache: -1 }); 
+        server.listen(8080, '127.0.0.1');
+        console.log('Server started on http://127.0.0.1:8080');
 
-        // 4. 启动 headless 浏览器
+        // 4. 启动浏览器
         browser = await puppeteer.launch({
             headless: "new",
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox',
+                '--disable-web-security', // 允许跨域请求
+                '--allow-file-access-from-files'
+            ]
         });
         const page = await browser.newPage();
-        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
         
-        // 允许 Puppeteer 自动下载文件到 output 文件夹
+        // 设置下载目录
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
         const client = await page.target().createCDPSession();
         await client.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: path.resolve(outputDir) });
 
-        page.on('dialog', async dialog => await dialog.accept());
-        page.on('console', msg => {
-            const text = msg.text();
-            console.log('PAGE LOG:', text);
-            if (text.includes('401')) console.error('CRITICAL: API Key rejected (401 Unauthorized)');
+        // ！！增强调试：记录 404 的具体资源名称 ！！
+        page.on('response', response => {
+            if (response.status() === 404) {
+                console.error(`PAGE ERROR 404: File not found -> ${response.url()}`);
+            }
         });
 
-        await page.goto('http://localhost:8080/index.html');
-        // 确保页面上的 CONFIGS 已加载
-        await page.waitForFunction(() => window.CONFIGS !== undefined, { timeout: 15000 });
+        page.on('console', msg => console.log('PAGE LOG:', msg.text()));
 
-        // --- 核心：API Key 自动匹配与注入逻辑 ---
+        // 核心逻辑：使用 retry 机制打开页面，并等待网络闲置
+        console.log('Navigating to local labels platform...');
+        await page.goto('http://127.0.0.1:8080/index.html', { 
+            waitUntil: 'networkidle0', // 等待所有资源加载完成
+            timeout: 60000 
+        });
+
+        // 再次检查 CONFIGS
+        console.log('Checking for window.CONFIGS...');
+        await page.waitForFunction(() => typeof window.CONFIGS !== 'undefined', { timeout: 30000 });
+
+        // --- API Key 注入 ---
         let apiKey = API_KEY; 
         let allSecrets = {};
         if (process.env.ALL_SECRETS) {
             try { allSecrets = JSON.parse(process.env.ALL_SECRETS); } catch (e) {}
         }
-
-        // 规则：将模型名转为大写，替换非法字符，用于在 Secret 寻找。
-        // 如 "gemini_3_flash_X666_" -> "GEMINI_3_FLASH_X666_"
         const modelNameFromConfig = taskConfig.model;
         const envSafeModelName = modelNameFromConfig.replace(/[^a-zA-Z0-9_]/g, '').toUpperCase();
         
         const findKey = (envObj, keyName) => {
             if (!envObj) return null;
             const upperTarget = keyName.toUpperCase();
-            // 同时尝试 原始名大写 和 原始名大写_KEY
             return envObj[upperTarget] || envObj[upperTarget + '_KEY'];
         };
 
-        // 匹配顺序：环境变量 -> Secrets JSON -> 通用 API_KEY
-        let matchedKey = findKey(process.env, envSafeModelName) || 
-                         findKey(allSecrets, envSafeModelName);
-        
+        let matchedKey = findKey(process.env, envSafeModelName) || findKey(allSecrets, envSafeModelName);
         if (matchedKey) {
             apiKey = matchedKey;
-            console.log(`Matching key found for model "${modelNameFromConfig}": ${apiKey.substring(0, 6)}...`);
-        } else if (!apiKey && (process.env.GEMINI_API_KEY || allSecrets.GEMINI_API_KEY)) {
-            apiKey = process.env.GEMINI_API_KEY || allSecrets.GEMINI_API_KEY;
-            console.log(`Using fallback GEMINI_API_KEY`);
+            console.log(`Matching key found for model "${modelNameFromConfig}"`);
         }
 
         if (apiKey) {
             await page.evaluate((key, modelName) => {
-                // modelName 是 config.js 里的键名，如 'gemini_3_flash_X666_'
                 if (window.CONFIGS && window.CONFIGS[modelName]) {
                     window.CONFIGS[modelName].key = key;
-                    console.log(`API Key successfully injected into configurations for: ${modelName}`);
                 } else {
-                    // 如果键名没匹配上，尝试模糊匹配 gemini 关键字
-                    console.warn(`Target model name "${modelName}" not found in CONFIGS keys. Attempting fuzzy match...`);
                     for (let k in window.CONFIGS) {
-                        if (k.toLowerCase().includes('gemini')) {
-                            window.CONFIGS[k].key = key;
-                        }
+                        if (k.toLowerCase().includes('gemini')) window.CONFIGS[k].key = key;
                     }
                 }
             }, apiKey, modelNameFromConfig);
-        } else {
-            console.warn('WARNING: No specific API Key found for this model. Analysis might fail.');
         }
 
-        // --- 开始任务 ---
-        // 模拟用户点击“导入任务包”按钮并分析
+        // --- 触发任务 ---
         const fileInput = await page.$('#importTaskInput');
         await fileInput.uploadFile(importZipPath);
         
-        console.log('Upload complete. Waiting for analysis to start...');
+        console.log('Task package uploaded. Waiting for analysis...');
         
-        // 等待分析开始 (isProcessing 变为 true)
-        await page.waitForFunction(() => window.state && window.state.isProcessing === true, { timeout: 60000 }).catch(() => {
-            console.log('Timeout waiting for start. Checking if results already exist.');
-        });
-        
-        console.log('Processing in progress... This may take a while.');
-        
-        // 等待分析结束 (isProcessing 变为 false)，设定最大超时时间 30 分钟
-        await page.waitForFunction(() => window.state && window.state.isProcessing === false, { timeout: 1800000 });
-        
-        const hasResults = await page.evaluate(() => {
-            const results = window.state.isVideoMode ? window.state.videoResults : window.state.imageResults;
-            return results && results.length > 0;
-        });
+        // 等待 state 对象初始化
+        await page.waitForFunction(() => window.state !== undefined, { timeout: 10000 });
 
-        if (!hasResults) {
-            console.error('Analysis failed: No results produced. Check logs for API errors.');
-        } else {
-            console.log('Analysis finished. Starting export sequence...');
-        }
-
-        // 5. 按照 workflow_config.json 中指定的格式导出结果
+        // 等待处理开始
+        await page.waitForFunction(() => window.state.isProcessing === true, { timeout: 90000 });
+        console.log('Processing analysis started...');
+        
+        // 等待处理结束 (超时设定为 45 分钟，视频任务较久)
+        await page.waitForFunction(() => window.state.isProcessing === false, { timeout: 2700000 });
+        
+        // 导出结果逻辑...
         const formats = (userConfig.exportFormat || 'yolo').split(',').map(s => s.trim());
-        
         await page.evaluate(async (fmts) => {
             for (const fmt of fmts) {
-                console.log(`Exporting format: ${fmt}`);
                 if (fmt === 'original') continue;
-                if (fmt === 'tagged') { if (!window.state.isVideoMode) await window.exportBatchTaggedImages(); }
-                else if (fmt === 'crop') { if (!window.state.isVideoMode) await window.exportAllCroppedImages(); }
-                else if (fmt === 'transparent') { if (!window.state.isVideoMode) await window.exportAllTransparentImages(); }
-                else if (fmt === 'yolo_txt') {
-                    if (window.state.isVideoMode) await window.exportBatchVideoFrames({ includeImages: false, includeLabels: true, includeClasses: false });
-                    else await window.exportBatchImageLabels({ includeClasses: false });
-                } else if (fmt === 'classes') {
-                    if (window.state.isVideoMode) await window.exportBatchVideoFrames({ includeImages: false, includeLabels: false, includeClasses: true });
-                    else await window.exportBatchImageLabels({ onlyClasses: true, includeClasses: true });
-                } else if (fmt === 'yolo') {
+                if (fmt === 'yolo') {
                     if (window.state.isVideoMode) await window.exportBatchVideoFrames();
                     else await window.exportBatchImageLabels();
-                } else if (fmt === 'tracked_video' || fmt === 'video') {
+                } else if (fmt === 'tracked_video') {
                     if (window.state.isVideoMode) await window.exportAllTaggedVideos();
                 }
-                // 每个导出动作间隔一下，避免冲突
-                await new Promise(r => setTimeout(r, 3000));
+                await new Promise(r => setTimeout(r, 5000));
             }
         }, formats);
 
-        // 如果包含 original 格式，手动拷贝原始文件
-        if (formats.includes('original')) {
-            const files = fs.readdirSync(tempFilesDir);
-            for (const file of files) fs.copyFileSync(path.join(tempFilesDir, file), path.join(outputDir, file));
-        }
-
-        // 等待下载完成 (检查 output 目录下是否有文件，且没有临时下载后缀)
-        console.log('Finalizing downloads...');
-        for (let i = 0; i < 60; i++) {
+        // 等待下载完成
+        console.log('Exporting results...');
+        let downloadWaitTime = 0;
+        while (downloadWaitTime < 120) {
             const files = fs.readdirSync(outputDir);
             if (files.length > 0 && !files.some(f => f.endsWith('.crdownload'))) break;
             await new Promise(r => setTimeout(r, 2000));
+            downloadWaitTime += 2;
         }
 
     } catch (err) {
-        console.error('CRITICAL EXECUTION ERROR:', err);
+        console.error('CRITICAL EXECUTION ERROR:', err.message);
+        // 抓取当前页面截图以便调试
+        if (page) await page.screenshot({ path: 'error_screenshot.png' });
         process.exit(1);
     } finally {
         if (browser) await browser.close();
         if (server) server.close();
         
-        // 清理临时文件
+        // 清理
         if (fs.existsSync('temp_import_task.zip')) fs.unlinkSync('temp_import_task.zip');
         if (fs.existsSync(tempFilesDir)) fs.rmSync(tempFilesDir, { recursive: true, force: true });
-        if (fs.existsSync('extracted_workflow_config.json')) fs.unlinkSync('extracted_workflow_config.json');
-        if (fs.existsSync('extracted_media.zip')) fs.unlinkSync('extracted_media.zip');
         
         console.log('Process finished.');
     }
