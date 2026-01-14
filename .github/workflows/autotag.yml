@@ -41,16 +41,16 @@ jobs:
 
     - name: Run AutoTag
       env:
-        # 修正：优先使用手动输入的 API_KEY，如果为空则使用 Secrets
         API_KEY: ${{ inputs.api_key || secrets.API_KEY }}
         ALL_SECRETS: ${{ toJSON(secrets) }}
       run: |
-        # 使用 inputs.xxx 获取值，并处理默认值逻辑
+        # 显式处理参数，如果 inputs 为空则传入固定的默认值字符串
         node .github/scripts/run_autotag.js \
-          "${{ inputs.package_zip }}" \
-          "${{ inputs.media_zip }}" \
-          "${{ inputs.config_file }}" \
+          "${{ inputs.package_zip || 'autotag_package.zip' }}" \
+          "${{ inputs.media_zip || 'media.zip' }}" \
+          "${{ inputs.config_file || 'workflow_config.json' }}" \
           "output"
+
 
     - name: Upload Results
       uses: actions/upload-artifact@v4
