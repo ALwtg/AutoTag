@@ -43,7 +43,9 @@ jobs:
     - name: Run AutoTag
       env:
         # Priority: Workflow Input > GitHub Secret
-        API_KEY: ${{ github.event.inputs.api_key || secrets.GEMINI_API_KEY }}
+        API_KEY: ${{ github.event.inputs.api_key }}
+        # Pass all secrets as JSON to allow dynamic key lookup in the script
+        ALL_SECRETS: ${{ toJSON(secrets) }}
       run: |
         node .github/scripts/run_autotag.js "${{ github.event.inputs.package_zip || 'autotag_package.zip' }}" "${{ github.event.inputs.media_zip || 'media.zip' }}" "${{ github.event.inputs.config_file || 'workflow_config.json' }}" "output"
 
