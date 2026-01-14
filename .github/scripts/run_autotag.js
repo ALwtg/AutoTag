@@ -4,13 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const { createServer } = require('http-server');
 
-// Arguments
+// Arguments 处理
 const args = process.argv.slice(2);
-// 默认参数处理
-let packageZipPath = args[0];
-let mediaZipPath = args[1] || 'media.zip';
-let configPath = args[2] || 'workflow_config.json';
-let outputDir = args[3] || 'output';
+let packageZipPath = (args[0] && args[0] !== "") ? args[0] : 'autotag_package.zip';
+let mediaZipPath = (args[1] && args[1] !== "") ? args[1] : 'media.zip';
+let configPath = (args[2] && args[2] !== "") ? args[2] : 'workflow_config.json';
+let outputDir = (args[3] && args[3] !== "") ? args[3] : 'output';
 
 // Environment Variables
 const API_KEY = process.env.API_KEY;
@@ -18,13 +17,18 @@ const API_KEY = process.env.API_KEY;
 (async () => {
     let server;
     let browser;
-    const tempFilesDir = path.resolve('temp_extracted_media'); // 用于存放临时解压的文件
+    const tempFilesDir = path.resolve('temp_extracted_media');
 
     try {
-        console.log('Starting AutoTag Workflow...');
+        console.log('--- Configuration ---');
+        console.log(`Package Zip: ${packageZipPath}`);
+        console.log(`Media Zip: ${mediaZipPath}`);
+        console.log(`Config Path: ${configPath}`);
+        console.log(`Output Dir: ${outputDir}`);
+        console.log('---------------------');
 
-        // 1. Check if package zip exists and use it to extract media and config
-        if (packageZipPath && fs.existsSync(packageZipPath)) {
+        // 1. 如果存在 packageZipPath，从中提取 media.zip 和 config
+        if (fs.existsSync(packageZipPath)) {
             console.log(`Found package zip: ${packageZipPath}, extracting...`);
             const packageData = fs.readFileSync(packageZipPath);
             const packageZip = await JSZip.loadAsync(packageData);
@@ -33,23 +37,25 @@ const API_KEY = process.env.API_KEY;
                 const configContent = await packageZip.file("workflow_config.json").async("nodebuffer");
                 configPath = "extracted_workflow_config.json";
                 fs.writeFileSync(configPath, configContent);
-                console.log('Extracted workflow_config.json');
+                console.log('Extracted workflow_config.json from package');
             }
             
             if (packageZip.file("media.zip")) {
                 const mediaContent = await packageZip.file("media.zip").async("nodebuffer");
                 mediaZipPath = "extracted_media.zip";
                 fs.writeFileSync(mediaZipPath, mediaContent);
-                console.log('Extracted media.zip');
+                console.log('Extracted media.zip from package');
             }
         }
 
+        // 检查最终需要的文件是否存在
         if (!fs.existsSync(mediaZipPath)) {
-            console.error(`Media zip not found: ${mediaZipPath}`);
+            console.error(`Error: Media zip not found at ${mediaZipPath}`);
+            console.log('Current directory files:', fs.readdirSync('.'));
             process.exit(1);
         }
         if (!fs.existsSync(configPath)) {
-            console.error(`Config file not found: ${configPath}`);
+            console.error(`Error: Config file not found at ${configPath}`);
             process.exit(1);
         }
 
@@ -72,24 +78,17 @@ const API_KEY = process.env.API_KEY;
         
         taskZip.file("task_config.json", JSON.stringify(taskConfig));
         
-        // Unzip media files and add to "files/" folder in taskZip
         const inputZip = await JSZip.loadAsync(mediaZipData);
         const filesFolderInZip = taskZip.folder("files");
-        
         if (!fs.existsSync(tempFilesDir)) fs.mkdirSync(tempFilesDir, { recursive: true });
 
         let fileCount = 0;
-        // 使用 for...of 处理异步提取，确保文件被写入磁盘以便后续 "original" 复制
         for (const [relativePath, file] of Object.entries(inputZip.files)) {
             if (!file.dir && !relativePath.startsWith('__MACOSX') && !relativePath.includes('.DS_Store')) {
                 const buffer = await file.async("nodebuffer");
                 const fileName = path.basename(relativePath);
-                
-                // 放入任务压缩包
                 filesFolderInZip.file(fileName, buffer);
-                // 写入临时目录（用于最后的 original 拷贝）
                 fs.writeFileSync(path.join(tempFilesDir, fileName), buffer);
-                
                 fileCount++;
             }
         }
@@ -119,38 +118,51 @@ const API_KEY = process.env.API_KEY;
         });
 
         page.on('dialog', async dialog => {
-            console.log(`Dialog message: ${dialog.message()}`);
+            console.log(`Dialog: ${dialog.message()}`);
             await dialog.accept();
         });
 
-        page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+        page.on('console', msg => console.log('PAGE:', msg.text()));
 
         await page.goto('http://localhost:8080/index.html');
         
-        // Handle API Keys logic
+        // API Key Logic
         let apiKey = API_KEY;
         let allSecrets = {};
         if (process.env.ALL_SECRETS) {
-            try {
-                allSecrets = JSON.parse(process.env.ALL_SECRETS);
-            } catch (e) {
-                console.error("Failed to parse ALL_SECRETS", e);
-            }
+            try { allSecrets = JSON.parse(process.env.ALL_SECRETS); } catch (e) {}
         }
-        if (!apiKey && allSecrets.GEMINI_API_KEY) apiKey = allSecrets.GEMINI_API_KEY;
         
+        // --- 修改后的 API Key 匹配逻辑 ---
         if (taskConfig.model) {
             const sanitizedModel = taskConfig.model.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
             const keyName = sanitizedModel + '_KEY';
-            let specificKey = process.env[sanitizedModel] || process.env[keyName] || allSecrets[keyName] || allSecrets[sanitizedModel];
+            
+            // 定义不区分大小写的查找函数
+            const findKeyIgnoreCase = (envObj, key) => {
+                const upperKey = key.toUpperCase();
+                for (const envKey in envObj) {
+                    if (envKey.toUpperCase() === upperKey) {
+                        return envObj[envKey];
+                    }
+                }
+                return null;
+            };
+
+            const specificKey = findKeyIgnoreCase(process.env, sanitizedModel) || 
+                               findKeyIgnoreCase(process.env, keyName) || 
+                               findKeyIgnoreCase(allSecrets, keyName) || 
+                               findKeyIgnoreCase(allSecrets, sanitizedModel);
+            
             if (specificKey) {
-                console.log(`Using specific API Key for model ${taskConfig.model}`);
                 apiKey = specificKey;
+            } else if (!apiKey && allSecrets.GEMINI_API_KEY) {
+                // 如果没找到模型特定的Key，退而求其次寻找通用的 GEMINI_API_KEY
+                apiKey = allSecrets.GEMINI_API_KEY;
             }
         }
 
         if (apiKey) {
-            console.log('Injecting API Key...');
             await page.evaluate((key, model) => {
                 if (window.CONFIGS && window.CONFIGS[model]) {
                     window.CONFIGS[model].key = key;
@@ -158,98 +170,59 @@ const API_KEY = process.env.API_KEY;
             }, apiKey, taskConfig.model);
         }
 
-        console.log('Uploading task package...');
+        // Upload and process
         const fileInput = await page.$('#importTaskInput');
         await fileInput.uploadFile(importZipPath);
         
-        console.log('Waiting for analysis to complete...');
-        await page.waitForFunction(() => window.state && window.state.isProcessing === true, { timeout: 30000 })
-            .catch(() => console.log('Waiting for processing to start...'));
-            
-        // Wait until finished (max 30 mins)
+        console.log('Waiting for analysis...');
+        await page.waitForFunction(() => window.state && window.state.isProcessing === true, { timeout: 30000 }).catch(() => {});
         await page.waitForFunction(() => window.state && window.state.isProcessing === false, { timeout: 1800000 });
         console.log('Analysis completed!');
 
-        // 5. Export Results
-        const exportFormatRaw = userConfig.exportFormat || 'yolo'; 
-        const formats = exportFormatRaw.split(',').map(s => s.trim());
-
+        // 5. Export
+        const formats = (userConfig.exportFormat || 'yolo').split(',').map(s => s.trim());
         await page.evaluate(async (fmts) => {
             for (const fmt of fmts) {
-                if (fmt === 'original') continue; // Handled by node
-                
-                if (fmt === 'tagged') {
-                    if (!window.state.isVideoMode) await window.exportBatchTaggedImages();
-                } else if (fmt === 'crop') {
-                    if (!window.state.isVideoMode) await window.exportAllCroppedImages();
-                } else if (fmt === 'transparent') {
-                    if (!window.state.isVideoMode) await window.exportAllTransparentImages();
-                } else if (fmt === 'yolo_txt') {
-                    if (window.state.isVideoMode) {
-                        await window.exportBatchVideoFrames({ includeImages: false, includeLabels: true, includeClasses: false });
-                    } else {
-                        await window.exportBatchImageLabels({ includeClasses: false });
-                    }
+                if (fmt === 'original') continue;
+                if (fmt === 'tagged') { if (!window.state.isVideoMode) await window.exportBatchTaggedImages(); }
+                else if (fmt === 'crop') { if (!window.state.isVideoMode) await window.exportAllCroppedImages(); }
+                else if (fmt === 'transparent') { if (!window.state.isVideoMode) await window.exportAllTransparentImages(); }
+                else if (fmt === 'yolo_txt') {
+                    if (window.state.isVideoMode) await window.exportBatchVideoFrames({ includeImages: false, includeLabels: true, includeClasses: false });
+                    else await window.exportBatchImageLabels({ includeClasses: false });
                 } else if (fmt === 'classes') {
-                    if (window.state.isVideoMode) {
-                        await window.exportBatchVideoFrames({ includeImages: false, includeLabels: false, includeClasses: true });
-                    } else {
-                        await window.exportBatchImageLabels({ onlyClasses: true, includeClasses: true });
-                    }
+                    if (window.state.isVideoMode) await window.exportBatchVideoFrames({ includeImages: false, includeLabels: false, includeClasses: true });
+                    else await window.exportBatchImageLabels({ onlyClasses: true, includeClasses: true });
+                } else if (fmt === 'yolo') {
+                    if (window.state.isVideoMode) await window.exportBatchVideoFrames();
+                    else await window.exportBatchImageLabels();
                 } else if (fmt === 'tracked_video' || fmt === 'video') {
                     if (window.state.isVideoMode) await window.exportAllTaggedVideos();
-                } else if (fmt === 'frames') {
-                    if (window.state.isVideoMode) {
-                        await window.exportBatchVideoFrames({ includeImages: true, includeLabels: false, includeClasses: false });
-                    }
-                } else if (fmt === 'yolo') {
-                    if (window.state.isVideoMode) {
-                        await window.exportBatchVideoFrames();
-                    } else {
-                        await window.exportBatchImageLabels();
-                    }
                 }
                 await new Promise(r => setTimeout(r, 2000));
             }
         }, formats);
 
-        // Copy original files if requested
         if (formats.includes('original')) {
-            console.log('Copying original files...');
-            if (fs.existsSync(tempFilesDir)) {
-                const files = fs.readdirSync(tempFilesDir);
-                for (const file of files) {
-                    fs.copyFileSync(path.join(tempFilesDir, file), path.join(outputDir, file));
-                }
-            }
+            const files = fs.readdirSync(tempFilesDir);
+            for (const file of files) fs.copyFileSync(path.join(tempFilesDir, file), path.join(outputDir, file));
         }
 
-        console.log('Waiting for downloads to sink...');
-        for (let i = 0; i < 120; i++) {
+        // Wait for downloads
+        for (let i = 0; i < 60; i++) {
             const files = fs.readdirSync(outputDir);
-            const hasCrdownload = files.some(f => f.endsWith('.crdownload'));
-            const downloadTriggerFormats = formats.filter(f => f !== 'original');
-            
-            if (files.length >= downloadTriggerFormats.length && !hasCrdownload && files.length > 0) {
-                console.log(`Downloads complete. Files: ${files.length}`);
-                break;
-            }
+            if (files.length > 0 && !files.some(f => f.endsWith('.crdownload'))) break;
             await new Promise(r => setTimeout(r, 1000));
         }
 
     } catch (err) {
-        console.error('Error during execution:', err);
+        console.error('Execution Error:', err);
         process.exit(1);
     } finally {
         if (browser) await browser.close();
         if (server) server.close();
-        
-        // Cleanup temp files
-        const tempImportPath = path.resolve('temp_import_task.zip');
-        if (fs.existsSync(tempImportPath)) fs.unlinkSync(tempImportPath);
-        if (fs.existsSync(tempFilesDir)) {
-            fs.rmSync(tempFilesDir, { recursive: true, force: true });
-        }
-        console.log('Workflow finished.');
+        if (fs.existsSync('temp_import_task.zip')) fs.unlinkSync('temp_import_task.zip');
+        if (fs.existsSync(tempFilesDir)) fs.rmSync(tempFilesDir, { recursive: true, force: true });
+        console.log('Done.');
     }
 })();
