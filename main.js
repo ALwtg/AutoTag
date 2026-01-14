@@ -222,12 +222,16 @@ function initModelSelect() {
     els.modelSelect.innerHTML = '';
     Object.keys(CONFIGS).forEach(key => {
         const option = document.createElement('option');
-        option.value = key;
-        // 显示 config.js 中的键名，或者可以优化显示格式
-        option.textContent = `${key} (${CONFIGS[key].model})`;
+        // value 存储的是配置文件的键名 (模型名)，例如 'gemini_3_flash_X666_'
+        // 这个值会被 TaskManager 读取并写入 workflow_config.json
+        option.value = key; 
+        
+        // textContent 显示给用户看，包含 ID，例如 'gemini_3_flash_X666_ (gemini-3-flash-preview)'
+        option.textContent = `${key} (${CONFIGS[key].model})`; 
         els.modelSelect.appendChild(option);
     });
 }
+
 
 ThemeManager.init();
 PanelManager.init();
@@ -563,23 +567,33 @@ function resetImageDisplay() {
 async function startAnalysis() {
     const hasFiles = (state.files && state.files.length > 0) || !!state.file;
     if (!hasFiles) return alert('请先上传文件');
+
+    // els.modelSelect.value 拿到的是模型名，如 'gemini_3_flash_X666_'
+    // config 拿到的是 { url: '...', key: '...', model: 'gemini-3-flash-preview' }
     const config = CONFIGS[els.modelSelect.value];
+    
+    if (!config) {
+        alert('选中的模型配置不存在');
+        return;
+    }
+
     setLoading(true);
     els.progress.box.classList.remove('hidden');
 
     try {
         if (state.isVideoMode) {
-            await processVideosBatch(config);
+            await processVideosBatch(config); // 将包含正确 ID 的配置对象传下去
         } else {
-            await processImagesBatch(config);
+            await processImagesBatch(config); // 同理
         }
     } catch (err) {
-        els.statusMsg.textContent = `错误: ${err.message}`;
+        els.statusMsg.textContent = `运行错误: ${err.message}`;
     } finally {
         setLoading(false);
         if(!state.isVideoMode) els.progress.box.classList.add('hidden');
     }
 }
+
 
 async function analyzeImage(config) {
     const base64 = els.imageCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
@@ -912,19 +926,35 @@ async function callAPI(config, messages) {
     try {
         const response = await fetch(config.url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.key}` },
-            body: JSON.stringify({ model: config.model, messages, response_format: { type: "json_object" } })
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${config.key}` 
+            },
+            body: JSON.stringify({ 
+                // 这里的 config.model 是具体的模型 ID，例如 'gemini-3-flash-preview'
+                model: config.model, 
+                messages, 
+                response_format: { type: "json_object" } 
+            })
         });
+        
         const data = await response.json();
+        if (data.error) {
+            console.error("API Error Response:", data.error);
+            els.statusMsg.textContent = `API 错误: ${data.error.message}`;
+            return [];
+        }
+
         const content = data.choices[0].message.content;
         const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
         const parsed = JSON.parse(jsonMatch[0]);
         return Array.isArray(parsed) ? parsed : (parsed.objects || []);
     } catch (e) {
-        console.error("API Error", e);
+        console.error("Fetch Exception:", e);
         return [];
     }
 }
+
 
 async function extractFrames(video, fps) {
     const duration = video.duration;
@@ -1271,8 +1301,9 @@ async function analyzeVideoFile(file, config, onProgress) {
                     }
     
                     try {
+                        // 这里的 config 依然是 startAnalysis 传进来的那个对象
                         const res = await callAPI(config, [{ role: "user", content: [
-                            { type: "text", text: `标注${prompt}并返回 JSON: [{"label":"${prompt}", "box_2d":[y1,x1,y2,x2]}]${classInstruction}` },
+                            { type: "text", text: `标注${prompt}并返回 JSON...` },
                             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${frames[i].base64}` } }
                         ]}]);
                         

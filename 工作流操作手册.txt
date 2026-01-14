@@ -18,7 +18,7 @@ AutoTag GitHub 云端自动化工作流操作手册
    - 在左侧菜单找到 **Secrets and variables** -> **Actions**。
    - 点击 **New repository secret**。
    - **Name**: 输入 `GEMINI_API_KEY`
-   - **Secret**: 输入您的 Gemini API Key (以 sk- 开头)。
+   - **Secret**: 输入您的 API Key (以 sk- 开头)。
    - 点击 Add secret 保存。
 
 第二步：生成任务包
