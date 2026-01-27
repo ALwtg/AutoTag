@@ -33,6 +33,13 @@ const TaskManager = {
         if (taskMenuBtn && taskMenu) {
             taskMenuBtn.onclick = (e) => {
                 e.stopPropagation();
+                // 自动切换对应的导出选项显示
+                const isVideo = els.modeToggle.checked;
+                const optImg = document.getElementById('exportOptionsImage');
+                const optVid = document.getElementById('exportOptionsVideo');
+                if(optImg) optImg.classList.toggle('hidden', isVideo);
+                if(optVid) optVid.classList.toggle('hidden', !isVideo);
+                
                 taskMenu.classList.toggle('hidden');
             };
             document.addEventListener('click', (e) => {
@@ -47,6 +54,8 @@ const TaskManager = {
                 if (e.target.files.length > 0) {
                     this.importTask(e.target.files[0]);
                 }
+                // 清空 input，允许重复导入同名文件
+                e.target.value = ''; 
                 taskMenu.classList.add('hidden');
             };
         }
@@ -99,14 +108,12 @@ const TaskManager = {
     stop() {
         if (confirm('确定要结束当前任务吗？结束后的数据可以正常导出。')) {
             this.isStopped = true;
-            this.resume(); // 确保如果暂停中也能退出循环
-            // UI更新会在任务循环退出后由主逻辑处理，或者在这里强制更新
-            // 但最好等待 processImagesBatch 退出
+            this.resume(); // 恢复以跳出循环
         }
     },
 
     updateUIState(state) {
-        const startBtn = document.getElementById('startBtn');
+       const startBtn = document.getElementById('startBtn');
         const taskControls = document.getElementById('taskControls');
         const pauseBtn = document.getElementById('pauseBtn');
         const resumeBtn = document.getElementById('resumeBtn');
@@ -114,6 +121,10 @@ const TaskManager = {
         if (state === 'idle') {
             startBtn.classList.remove('hidden');
             taskControls.classList.add('hidden');
+            // 确保按钮可用
+            startBtn.disabled = false;
+            startBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
+            startBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
         } else if (state === 'running') {
             startBtn.classList.add('hidden');
             taskControls.classList.remove('hidden');
@@ -141,100 +152,44 @@ const TaskManager = {
             this.backupIntervalId = null;
         }
     },
-
-    // 覆盖的并发执行器
+    
     async runWithConcurrencyOverride(items, worker, concurrency) {
         this.startTaskLifecycle();
-        
-        // 找出还未处理的项目（如果是断点续传）
-        // 这里假设 items 是完整列表，我们需要跳过已经有结果的
-        // 但是 main.js 中的逻辑是每次重新 processImagesBatch 都会清空 imageResults 或者重新开始
-        // 所以我们需要在 processImagesBatch 调用前处理好 items，或者在这里跳过
-        
-        // 由于 main.js 的 processImagesBatch 逻辑比较死板，我们主要控制 pause/stop
-        // 对于断点续传，我们会在 importTask 中恢复 state.imageResults，
-        // 并修改传入 processImagesBatch 的 files 列表，或者让 worker 检查是否已存在结果
-        
-        // 更好的方式：items 是 files。我们检查 state.imageResults 中是否已经有该 file 的结果
-        // 但 file 对象可能不同（如果是导入的）。我们需要根据 fileName 匹配。
-        
         const processedNames = new Set();
-        if (state.isVideoMode) {
-            // For videos, we don't just skip. We might need to resume PARTIALLY processed videos.
-            // analyzeVideoFile handles partial resume internally by checking state.videoResults.
-            // So we only skip if the video is FULLY processed (how to determine? maybe a flag or if user considers it done?)
-            // Currently, analyzeVideoFile logic will resume from where it left off. 
-            // So we should NOT skip files here for video mode unless we are sure it's 100% done.
-            // But we don't have a 100% done flag.
-            // However, analyzeVideoFile returns quickly if it's done. 
-            // So for video mode, we can let the worker run, and analyzeVideoFile will handle it.
-            // BUT, if we have multiple videos, and 4 are done, 1 is half done.
-            // We want to skip the 4 done ones?
-            // Let's assume for now we don't skip in TaskManager for video, relying on analyzeVideoFile's fast-forward.
-            // Wait, if we don't skip, worker runs, creates video element, extracts frames... that takes time.
-            // We should optimization skip if we know it's done.
-            
-            // Let's iterate and check if there's a COMPLETE result? 
-            // Since we don't have a complete flag, let's just stick to the original logic:
-            // IF it's in the results list, it's "processed" according to original logic.
-            // BUT now we have partial results.
-            // If we mark partial results with `isPartial` flag (added in main.js), we can check that.
-            
-            state.videoResults.forEach(r => {
-                if (!r.isPartial) {
-                     // Only skip if NOT partial (meaning it's fully done or imported as done)
-                     // When importing, we don't set isPartial, so imported results are treated as "done" by default?
-                     // If imported result is actually partial (from the user's perspective, lost frames),
-                     // we want to process it.
-                     // The issue is: Import logic just restores `state.videoResults`. It doesn't know if it was finished or not.
-                     // So we probably should NOT skip here for videos, and let analyzeVideoFile check the frame count?
-                     // Or we simply don't populate processedNames for video mode, and let analyzeVideoFile handle the "Resume" logic.
-                     // Yes, let's clear processedNames for video to rely on frame-level resume.
-                } else {
-                    // It is partial, so we definitely need to process it.
-                }
-            });
-            // processedNames.clear(); // Disable skipping for video to allow frame-level check
-        } else {
+        
+        // 只有非视频模式才跳过已处理的；视频模式可能需要继续
+        if (!state.isVideoMode) {
             state.imageResults.forEach(r => processedNames.add(r.fileName));
+        } else {
+             // 视频模式下由 worker 内部逻辑判断是否断点续传，这里不跳过
         }
 
         let index = 0;
         const total = items.length;
-        let completed = processedNames.size; // 初始进度
-
+        
+        // 并发 Promise 池
         const runners = new Array(Math.min(concurrency, items.length)).fill(0).map(async () => {
             while (index < items.length) {
-                // Check Stop
                 if (this.isStopped) break;
-
-                // Check Pause
+                
+                // 暂停检查
                 while (this.isPaused) {
                     if (this.isStopped) break;
                     await new Promise(r => setTimeout(r, 500));
                 }
                 if (this.isStopped) break;
 
-                // Get task
-                // 必须原子操作获取 index
-                // 由于 JS 单线程，这里是安全的
+                // 取任务
                 const currentIndex = index++; 
                 if (currentIndex >= items.length) break;
                 
                 const item = items[currentIndex];
 
-                // Check if already processed (Resuming)
+                // 图片模式跳过逻辑
                 if (!state.isVideoMode && processedNames.has(item.name)) {
-                    // Skip images only
                     continue;
                 }
                 
-                // For video, we don't skip here, we let analyzeVideoFile handle the resume logic.
-                // UNLESS we want to optimize for fully completed videos?
-                // If we assume imported results are "what we have", we always want to try to finish them if they have frames?
-                // Actually, if a video is truly done, analyzeVideoFile will scan it and see "oh, frames match annotations length" and resolve.
-                // So it is safe to run.
-
                 try {
                     await worker(item);
                 } catch (err) {
@@ -244,9 +199,7 @@ const TaskManager = {
         });
 
         await Promise.all(runners);
-        
         this.endTaskLifecycle();
-        
         if (this.isStopped) {
             els.statusMsg.textContent = '任务已手动结束';
         }
@@ -264,34 +217,44 @@ const TaskManager = {
         try {
             const zip = new JSZip();
             
-            // 1. 保存元数据 Task Config
+            const isVideo = state.isVideoMode;
+            const exportOpts = [];
+            const checkboxes = document.querySelectorAll(isVideo ? 'input[name="exportOptVid"]:checked' : 'input[name="exportOptImg"]:checked');
+            checkboxes.forEach(cb => exportOpts.push(cb.value));
+
+            // 获取视频相关的设置
+            const frameRateInput = document.getElementById('frameRate');
+            const manualFrameInput = document.getElementById('manualFrame');
+
+            // 保存元数据
             const taskConfig = {
                 timestamp: Date.now(),
-                mode: state.isVideoMode ? 'video' : 'image',
+                mode: isVideo ? 'video' : 'image',
                 model: els.modelSelect.value,
                 prompt: els.promptInput.value,
+                classLabel: els.classLabelInput.value, // 保存类别名
                 scaleFactor: els.scaleFactor.value,
                 apiRpm: els.apiRpm.value,
                 parallelCount: els.parallelCountGlobal.value,
-                results: state.isVideoMode ? state.videoResults : state.imageResults
+                exportOptions: exportOpts,
+                // [NEW] 保存视频设置，用于导入时恢复UI
+                frameRate: frameRateInput ? frameRateInput.value : '1',
+                manualFrame: manualFrameInput ? manualFrameInput.checked : false,
+                // 保存结果数据 (移除 file 引用)
+                results: isVideo ? state.videoResults : state.imageResults
             };
 
-            // 简化 results，去掉 file 引用 (它是 File 对象，无法 JSON)
-            // 实际上 main.js 中 imageResults 存了 file 对象。
-            // 我们只需要存 fileName，import 时重新关联
-            const safeResults = (state.isVideoMode ? state.videoResults : state.imageResults).map(item => {
+            const safeResults = (isVideo ? state.videoResults : state.imageResults).map(item => {
                 const copy = { ...item };
-                delete copy.file; // Remove File object
+                delete copy.file; // 移除 File 对象避免循环引用
                 return copy;
             });
             taskConfig.results = safeResults;
 
             zip.file("task_config.json", JSON.stringify(taskConfig, null, 2));
 
-            // 2. 保存文件 (User Uploaded Files)
+            // 保存源文件
             const filesFolder = zip.folder("files");
-            
-            // 为了避免重复读取大文件，如果是从本地 File 对象读取
             for (const file of state.files) {
                 filesFolder.file(file.name, file);
             }
@@ -299,12 +262,10 @@ const TaskManager = {
             const content = await zip.generateAsync({ type: "blob" });
             
             if (isBackup) {
-                // 自动下载备份
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(content);
                 a.download = `autotag_backup_${Date.now()}.zip`;
                 a.click();
-                console.log('Auto backup completed.');
             } else {
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(content);
@@ -325,80 +286,98 @@ const TaskManager = {
         els.statusMsg.textContent = '正在导入任务...';
         try {
             const zip = await JSZip.loadAsync(zipFile);
-            
-            // 1. 读取配置
             const configText = await zip.file("task_config.json").async("string");
             const taskConfig = JSON.parse(configText);
 
-            // 2. 恢复 UI 状态
+            // 1. 恢复模式
             if ((taskConfig.mode === 'video' && !state.isVideoMode) || (taskConfig.mode === 'image' && state.isVideoMode)) {
                 els.modeToggle.checked = (taskConfig.mode === 'video');
-                // Trigger change event
                 els.modeToggle.dispatchEvent(new Event('change'));
             }
             
+            // 2. 恢复通用UI设置
             els.modelSelect.value = taskConfig.model || els.modelSelect.value;
             els.promptInput.value = taskConfig.prompt || '';
+            if (els.classLabelInput) els.classLabelInput.value = taskConfig.classLabel || ''; // 恢复类别名
             if (taskConfig.scaleFactor) els.scaleFactor.value = taskConfig.scaleFactor;
-            if (taskConfig.apiRpm) els.apiRpm.value = taskConfig.apiRpm;
             if (taskConfig.parallelCount) els.parallelCountGlobal.value = taskConfig.parallelCount;
+            
+            // 3. [NEW] 恢复视频模式特有设置 (FPS 和 手动抽帧状态)
+            if (taskConfig.mode === 'video') {
+                if (taskConfig.frameRate && document.getElementById('frameRate')) {
+                    document.getElementById('frameRate').value = taskConfig.frameRate;
+                }
+                if (taskConfig.manualFrame !== undefined && document.getElementById('manualFrame')) {
+                    const cb = document.getElementById('manualFrame');
+                    cb.checked = taskConfig.manualFrame;
+                    // 触发事件以显示/隐藏 FPS 输入框（依赖 main.js 的事件监听）
+                    cb.dispatchEvent(new Event('change')); 
+                }
+            }
 
-            // 3. 恢复文件
+            // 4. 恢复复选框 (导出选项)
+            if (taskConfig.exportOptions) {
+                const isVideo = (taskConfig.mode === 'video');
+                const checkboxes = document.querySelectorAll(isVideo ? 'input[name="exportOptVid"]' : 'input[name="exportOptImg"]');
+                checkboxes.forEach(cb => {
+                    cb.checked = taskConfig.exportOptions.includes(cb.value);
+                });
+            }
+
+            // 5. 恢复文件对象
             const filesFolder = zip.folder("files");
             const restoredFiles = [];
-            
             const filePromises = [];
             filesFolder.forEach((relativePath, fileEntry) => {
                 filePromises.push(async () => {
                     const blob = await fileEntry.async("blob");
-                    // 重建 File 对象
                     const file = new File([blob], relativePath, { type: blob.type });
                     restoredFiles.push(file);
                 });
             });
 
-            // 等待所有文件解压
             await Promise.all(filePromises.map(fn => fn()));
-            
-            // 排序可能乱了，不过通常不影响，或者按文件名排
+            // 按文件名排序，保证列表顺序一致
             restoredFiles.sort((a, b) => a.name.localeCompare(b.name));
             
-            // 更新 State
             state.files = restoredFiles;
             state.file = restoredFiles[0];
-            renderFileList(); // Update Sidebar
+            
+            // 重要：重置视频状态，因为导入后需要重新走“抽帧”流程（利用缓存或重新解码）
+            if (taskConfig.mode === 'video') {
+                state.videoAnalysisReady = false; 
+                state.videoFramesCache = new Map(); // 清空旧缓存
+                els.btnText.textContent = "开始抽帧";
+            }
+            
+            renderFileList();
 
-            // 4. 恢复已有结果
-            // 需要将 results 中的 file 引用指回 restoredFiles 中的对象
+            // 6. 恢复分析结果
             const restoredResults = taskConfig.results.map(r => {
                 const matchingFile = restoredFiles.find(f => f.name === r.fileName);
-                return {
-                    ...r,
-                    file: matchingFile
-                };
+                return { ...r, file: matchingFile, fps: r.fps || parseFloat(taskConfig.frameRate || 1) };
             });
 
             if (taskConfig.mode === 'video') {
                 state.videoResults = restoredResults;
-                els.statusMsg.textContent = `已恢复 ${restoredResults.length} 个视频的处理结果`;
+                els.statusMsg.textContent = `已恢复 ${restoredResults.length} 个视频的处理记录`;
             } else {
                 state.imageResults = restoredResults;
-                // 恢复时间轴和 Gallery
-                document.getElementById('timelineContent').innerHTML = ''; // Clear
-                document.getElementById('cropGallery').innerHTML = ''; // Clear
-                
+                document.getElementById('timelineContent').innerHTML = '';
+                document.getElementById('cropGallery').innerHTML = '';
                 restoredResults.forEach((r, idx) => {
-                    appendTimelineItem(r.file, r.annotations, idx);
-                    appendCropGallery(r.annotations);
+                    if(r.annotations && r.annotations.length > 0) {
+                        appendTimelineItem(r.file, r.annotations, idx);
+                        appendCropGallery(r.annotations);
+                    }
                 });
-                
                 els.statusMsg.textContent = `已恢复 ${restoredResults.length} 张图片的处理结果`;
             }
 
-            // 5. 自动继续任务？
-            // 询问用户是否继续
-            if (confirm(`导入成功！共 ${restoredFiles.length} 个文件，已完成 ${restoredResults.length} 个。\n是否立即从断点继续执行？`)) {
-                startAnalysis();
+            // 7. 自动开始/继续
+            if (confirm(`导入成功！共 ${restoredFiles.length} 个文件。\n是否立即恢复现场并继续执行？\n(视频任务将根据保存的FPS自动重新定位，数据不会丢失)`)) {
+                // 调用 main.js 的 startAnalysis，它会自动判断是抽帧还是分析
+                window.startAnalysis(); 
             }
 
         } catch (e) {
@@ -409,8 +388,6 @@ const TaskManager = {
     }
 };
 
-// 初始化
-// 确保 DOM 加载完成后执行
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => TaskManager.init());
 } else {

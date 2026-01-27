@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 // UI 元素
 const els = {
     modeToggle: $('modeToggle'), modeLabel: $('modeLabel'),
-    fileInput: $('fileInput'), classesInput: $('classesInput'), promptInput: $('promptInput'), modelSelect: $('modelSelect'),
+    fileInput: $('fileInput'), classesInput: $('classesInput'), promptInput: $('promptInput'), classLabelInput: $('classLabelInput'), modelSelect: $('modelSelect'),
     videoOptions: $('videoOptions'), manualFrame: $('manualFrame'), frameRateDiv: $('frameRateDiv'),
     imageOptions: $('imageOptions'), // 新增
     startBtn: $('startBtn'), downloadBtn: $('downloadBtn'),
@@ -23,58 +23,44 @@ const els = {
     exportCanvas: document.createElement('canvas'), // 隐藏的离屏Canvas用于处理导出
     get fileList() { return $('fileList'); },
     get fileCount() { return $('fileCount'); },
-    exportMenu: $('exportMenu'), // 新增
+    fileMenu: $('fileMenu'), settingsMenu: $('settingsMenu'), // 新增
     get videoControls() { return $('videoControls'); },
     get videoPlayBtn() { return $('videoPlayBtn'); },
     get videoSeek() { return $('videoSeek'); },
     get videoTime() { return $('videoTime'); },
 };
-
 // Expose els to global scope for TaskManager
 window.els = els;
 
 // --- Panel Manager (Z-Index) ---
 const PanelManager = {
     baseZIndex: 50,
-    panels: ['taskMenu', 'cropPreview', 'timelineResults', 'exportMenu'],
-    
+    // taskMenu 已合并入设置菜单，fileMenu/settingsMenu 由 dropdown 逻辑管理，此处仅管理浮动侧边栏
+    panels: ['cropPreview', 'timelineResults'],
+
     init() {
         this.panels.forEach(id => {
             const el = $(id);
             if (!el) return;
-            // 任务管理始终置顶，其他面板默认层级
-            el.style.zIndex = (id === 'taskMenu') ? 10000 : 30;
+            el.style.zIndex = 30;
             el.addEventListener('mousedown', () => this.bringToFront(el));
         });
 
         // 互斥逻辑：剪裁预览 vs 时间轴
         this.setupToggle('cropPreviewBtn', 'cropPreview', 'timelineResults');
         this.setupToggle('timelineResultsBtn', 'timelineResults', 'cropPreview');
-
-        // 任务管理按钮点击时确保置顶 (显示逻辑在 task_manager.js)
-        const taskBtn = $('taskMenuBtn');
-        const taskMenu = $('taskMenu');
-        if (taskBtn && taskMenu) {
-            taskBtn.addEventListener('click', () => {
-                setTimeout(() => {
-                    if (!taskMenu.classList.contains('hidden')) {
-                        this.bringToFront(taskMenu);
-                    }
-                }, 0);
-            });
-        }
     },
 
     setupToggle(btnId, panelId, otherPanelId) {
         const btn = $(btnId);
         const panel = $(panelId);
         const other = $(otherPanelId);
-        
+
         if (btn && panel) {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const willShow = panel.classList.contains('hidden');
-                
+
                 if (willShow) {
                     panel.classList.remove('hidden');
                     this.bringToFront(panel);
@@ -90,16 +76,10 @@ const PanelManager = {
     },
 
     bringToFront(el) {
-        if (el.id === 'taskMenu') {
-            // 始终保持最高层级
-            el.style.zIndex = 10000;
-        } else {
-            this.baseZIndex++;
-            el.style.zIndex = this.baseZIndex;
-        }
+        this.baseZIndex++;
+        el.style.zIndex = this.baseZIndex;
     }
 };
-
 // --- Theme Manager ---
 const ThemeManager = {
     init() {
@@ -135,26 +115,45 @@ const ThemeManager = {
     }
 };
 
-// Toggle Export Menu
-window.toggleExportMenu = function() {
-    if (els.exportMenu) {
-        els.exportMenu.classList.toggle('hidden');
-        if (!els.exportMenu.classList.contains('hidden')) {
-            PanelManager.bringToFront(els.exportMenu);
+// 通用下拉菜单切换函数
+window.toggleDropdown = function(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    // 打开前先关闭其他所有弹出的菜单，避免重叠
+    const allMenus = ['fileMenu', 'settingsMenu'];
+    allMenus.forEach(menuId => {
+        if (menuId !== id) {
+            const other = document.getElementById(menuId);
+            if (other) other.classList.add('hidden');
         }
-    }
+    });
+
+    el.classList.toggle('hidden');
 };
 
-// Close dropdown when clicking outside
-document.addEventListener('click', function(e) {
-    if (els.exportMenu && !els.exportMenu.classList.contains('hidden')) {
-        const btn = $('exportBtn');
-        if (btn && !btn.contains(e.target) && !els.exportMenu.contains(e.target)) {
-            els.exportMenu.classList.add('hidden');
-        }
-    }
-});
+// 兼容旧调用
+window.toggleExportMenu = () => window.toggleDropdown('fileMenu');
 
+// 点击其他地方关闭所有下拉菜单
+document.addEventListener('click', function(e) {
+    const dropdowns = [
+        ['fileBtn', 'fileMenu'],
+        ['settingsBtn', 'settingsMenu']
+    ];
+
+    dropdowns.forEach(([btnId, menuId]) => {
+        const btn = document.getElementById(btnId);
+        const menu = document.getElementById(menuId);
+
+        if (menu && !menu.classList.contains('hidden')) {
+            // 如果点击的既不是按钮，也不是菜单内部，则关闭
+            if (btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+                menu.classList.add('hidden');
+            }
+        }
+    });
+});
 // 状态变量
 let state = {
     isVideoMode: false,
@@ -172,7 +171,9 @@ let state = {
     imageRect: null,
     videoRect: null,
     videoScrubbing: false,
-    videoFrameCbHandle: null
+    videoFrameCbHandle: null,
+    videoFramesCache: new Map(), // key: filename, value: { frames, fps }
+    videoAnalysisReady: false    // true 表示抽帧完成，按钮变成"开始分析"
 };
 
 // Expose state to global scope for TaskManager
@@ -296,48 +297,54 @@ function toggleMode() {
     els.modeLabel.textContent = state.isVideoMode ? '当前: 视频模式' : '当前: 图片模式';
     els.fileInput.accept = state.isVideoMode ? 'video/*' : 'image/*';
     els.videoOptions.classList.toggle('hidden', !state.isVideoMode);
+
+    // Switch Export Options Visibility
+    const optImg = document.getElementById('exportOptionsImage');
+    const optVid = document.getElementById('exportOptionsVideo');
+    if (optImg) optImg.classList.toggle('hidden', state.isVideoMode);
+    if (optVid) optVid.classList.toggle('hidden', !state.isVideoMode);
+
     els.imageCanvas.classList.remove('hidden');
     els.overlayCanvas.classList.remove('hidden');
     els.timelineResults.classList.add('hidden');
     if (els.videoControls) els.videoControls.classList.toggle('hidden', !state.isVideoMode);
-    
+
     // UI 显隐控制
-    if (state.isVideoMode) {
-        // 视频模式下：隐藏图片特有选项和按钮
-        els.imageOptions.classList.add('hidden');
+    if (state.isVideoMode) {        els.imageOptions.classList.add('hidden');
         els.exportAllTransparentBtn.classList.add('hidden');
         els.exportAllCropBtn.classList.add('hidden');
         els.exportBatchImageLabelsBtn.classList.add('hidden');
         
-        // 显示视频特有按钮
         els.exportAllTaggedVideosBtn.classList.remove('hidden');
         els.exportBatchVideoFramesBtn.classList.remove('hidden');
         
-        // 触发一次 manualFrame 的 change 事件以正确显示/隐藏 frameRateDiv
         els.manualFrame.dispatchEvent(new Event('change'));
+
+        // [New Logic] 重置视频抽帧状态
+        state.videoAnalysisReady = false;
+        els.btnText.textContent = "开始抽帧";
     } else {
-        // 图片模式下：显示图片特有选项和按钮
         els.imageOptions.classList.remove('hidden');
         els.exportAllTransparentBtn.classList.remove('hidden');
         els.exportAllCropBtn.classList.remove('hidden');
         els.exportBatchImageLabelsBtn.classList.remove('hidden');
         
-        // 隐藏视频特有按钮
         els.exportAllTaggedVideosBtn.classList.add('hidden');
         els.exportBatchVideoFramesBtn.classList.add('hidden');
+        
+        els.btnText.textContent = "开始分析";
     }
 
     state.annotations = [];
     state.files = [];
     state.imageResults = [];
     state.videoResults = [];
-    renderFileList(); // Clear UI list
+    state.videoFramesCache.clear(); // 清空缓存
+    renderFileList(); 
     els.statusMsg.textContent = '模式已切换';
 
     if (!state.isVideoMode) {
-        try {
-            els.videoPlayer.pause();
-        } catch {}
+        try { els.videoPlayer.pause(); } catch {}
         els.videoPlayer.removeAttribute('src');
         els.videoPlayer.load();
         state.videoRect = null;
@@ -353,6 +360,7 @@ function toggleMode() {
         syncVideoControls();
     }
 }
+
 
 function handleFileSelect(e) {
     const selected = Array.from(e.target.files || []);
@@ -519,14 +527,14 @@ function handleClassesSelect(e) {
         state.unifiedClassMap.clear();
         state.nextClassId = 0;
         
-        lines.forEach((label) => {
-            if (!state.unifiedClassMap.has(label)) {
-                state.unifiedClassMap.set(label, state.nextClassId++);
-            }
-        });
-        state.customClassesLoaded = true;
-        els.statusMsg.textContent = `已加载 ${state.unifiedClassMap.size} 个自定义类别`;
-    };
+lines.forEach((label) => {
+    if (!state.unifiedClassMap.has(label)) {
+        state.unifiedClassMap.set(label, state.nextClassId++);
+    }
+});
+els.classLabelInput.value = lines.join(' ');
+state.customClassesLoaded = true;
+els.statusMsg.textContent = `已加载 ${state.unifiedClassMap.size} 个自定义类别`;    };
     reader.readAsText(file);
 }
 
@@ -563,6 +571,17 @@ function resetImageDisplay() {
 async function startAnalysis() {
     const hasFiles = (state.files && state.files.length > 0) || !!state.file;
     if (!hasFiles) return alert('请先上传文件');
+    
+    // [New Logic] 视频模式分两步走
+    if (state.isVideoMode) {
+        if (!state.videoAnalysisReady) {
+            // 第一步：抽帧
+            await batchExtractFrames();
+            return;
+        }
+        // 第二步：分析 (继续向下执行 processVideosBatch)
+    }
+
     const config = CONFIGS[els.modelSelect.value];
     setLoading(true);
     els.progress.box.classList.remove('hidden');
@@ -581,14 +600,75 @@ async function startAnalysis() {
     }
 }
 
+// [必须新增] 请将此函数添加在 startAnalysis 下方
+async function batchExtractFrames() {
+    if (!state.files || state.files.length === 0) return;
+    
+    // UI 设置为抽帧中
+    state.isProcessing = true;
+    els.startBtn.disabled = true; // 变灰
+    els.startBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+    els.startBtn.classList.add('bg-gray-400', 'cursor-not-allowed');
+    els.progress.box.classList.remove('hidden');
+    
+    let completed = 0;
+    const total = state.files.length;
+    
+    const fpsInput = $('frameRate');
+    let targetFps = fpsInput ? parseFloat(fpsInput.value || '1') : 1;
+    
+    for (let i = 0; i < total; i++) {
+        const file = state.files[i];
+        
+        let frames = [];
+        let currentFps = targetFps;
+        
+        // 检查是否有历史记录（修复导入任务FPS丢失）
+        const existingResult = state.videoResults.find(r => r.fileName === file.name);
+        if (existingResult && existingResult.fps) {
+            currentFps = existingResult.fps;
+            if(fpsInput) fpsInput.value = currentFps; // 同步UI
+        }
+
+        updateProgress(Math.round(((completed) / total) * 100), `正在抽帧 (${i+1}/${total}): ${file.name}`);
+        
+        const video = document.createElement('video');
+        video.src = URL.createObjectURL(file);
+        await new Promise(r => video.onloadedmetadata = r);
+        frames = await extractFrames(video, currentFps);
+        URL.revokeObjectURL(video.src);
+        video.remove();
+        
+        // 存入缓存
+        state.videoFramesCache.set(file.name, { frames, fps: currentFps });
+        completed++;
+    }
+    
+    updateProgress(100, '所有视频抽帧完成，请开始分析');
+    
+    // UI 恢复与变身
+    state.isProcessing = false;
+    state.videoAnalysisReady = true;
+    
+    els.startBtn.disabled = false;
+    els.startBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
+    els.startBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+    els.btnText.textContent = "开始分析"; // 变身
+}
+
+
 async function analyzeImage(config) {
     const base64 = els.imageCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
     const prompt = els.promptInput.value.trim() || '物体';
+    const classLabel = els.classLabelInput.value.trim() || prompt; // 优先使用类别名
+    
     const systemPrompt = `任务：识别目标并返回JSON列表。
-每个对象包含：{"label":"${prompt}", "polygon":[[y,x],...], "box_2d":[ymin,xmin,ymax,xmax]} 
+任务描述：${prompt}
+每个对象包含：{"label":"${classLabel}", "polygon":[[y,x],...], "box_2d":[ymin,xmin,ymax,xmax]} 
 坐标均为0-1000归一化。`;
 
     return await callAPI(config, [
+
         { role: "user", content: [
             { type: "text", text: systemPrompt },
             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64}` } }
@@ -926,7 +1006,7 @@ async function callAPI(config, messages) {
     }
 }
 
-async function extractFrames(video, fps) {
+async function extractFrames(video, fps, onProgress) {
     const duration = video.duration;
     const frames = [];
     const canvas = document.createElement('canvas');
@@ -937,9 +1017,11 @@ async function extractFrames(video, fps) {
         await new Promise(r => video.onseeked = r);
         ctx.drawImage(video, 0, 0);
         frames.push({ time: t, base64: canvas.toDataURL('image/jpeg', 0.6).split(',')[1] });
+        if (onProgress) onProgress(t / (duration || 1));
     }
     return frames;
 }
+
 
 function updateProgress(pct, text) {
     els.progress.fill.style.width = `${pct}%`;
@@ -983,21 +1065,35 @@ async function processImageTwoStage(config, reportProgress = true) {
     const t0 = performance.now();
     const base64 = els.imageCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
     const prompt = els.promptInput.value.trim() || '目标';
+    const classLabelInputVal = els.classLabelInput.value.trim();
+    // 支持空格分割多标签
+    const manualLabels = classLabelInputVal ? classLabelInputVal.split(/\s+/) : [];
     
+    // 如果有多个标签，示例中用第一个；如果是单个，就直接用；没填则用prompt
+    const targetJsonLabel = (manualLabels.length > 0) ? manualLabels[0] : (classLabelInputVal || prompt);
+
+    // ... (构造 msg1, 调用 callAPI API检测 Box) ...
     let classInstruction = "";
     if (state.unifiedClassMap.size > 0) {
         const classes = getAllClasses();
         const classListStr = classes.map((c, i) => `${i}:${c}`).join(',');
         classInstruction = `\n请严格优先使用以下已知类别标准名称(ID:名称): [${classListStr}]。`;
+    } else if (manualLabels.length > 1) {
+        // 多标签模式
+        classInstruction = `\n多类别检测模式。请识别以下类别: ${JSON.stringify(manualLabels)}。返回的 "label" 字段必须严格匹配其中之一。`;
+    } else {
+        // 单标签模式（或回退）
+        classInstruction = `\nOutput Label MUST be: "${targetJsonLabel}"`;
     }
 
     const msg1 = [{ role: "user", content: [
-        { type: "text", text: `仅检测并返回 [{"label":"${prompt}","box_2d":[ymin,xmin,ymax,xmax]}]，坐标归一化到0-1000。${classInstruction}` },
+        { type: "text", text: `Task: ${prompt}. 仅检测并返回 [{"label":"${targetJsonLabel}","box_2d":[ymin,xmin,ymax,xmax]}]，坐标归一化到0-1000。${classInstruction}` },
         { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64}` } }
     ]}];
+
     const boxes = await callAPI(config, msg1);
-    
-    // 注册/更新类别ID
+
+
     boxes.forEach(b => getClassId(b.label));
     
     state.annotations = boxes;
@@ -1009,30 +1105,29 @@ async function processImageTwoStage(config, reportProgress = true) {
     els.statusMsg.textContent = `阶段1完成：${stage1Time}ms`;
     const sw = state.img.width, sh = state.img.height;
     let apiTime = 0, cropTime = 0;
+
+    // 【优化点】：检查是否勾选了透明图（这决定了是否需要第二阶段的API调用）
+    const needTransparent = els.extractTransparent && els.extractTransparent.checked;
+
     for (let i = 0; i < boxes.length; i++) {
         const b = boxes[i];
         const [ymin, xmin, ymax, xmax] = b.box_2d;
         const rx = (xmin/1000)*sw, ry = (ymin/1000)*sh, rw = ((xmax-xmin)/1000)*sw, rh = ((ymax-ymin)/1000)*sh;
+        
         const c0 = performance.now();
         const c = els.exportCanvas;
         c.width = rw; c.height = rh;
         const cctx = c.getContext('2d');
         cctx.drawImage(state.img, rx, ry, rw, rh, 0, 0, rw, rh);
         let upCanvas = c;
-        // 只有在需要透明图，或者用户设置了缩放倍数 > 1 时才进行放大处理
-        // 如果未勾选提取透明图，通常不需要进行高倍数放大，这会浪费时间
-        const isTransparentNeeded = els.extractTransparent && els.extractTransparent.checked;
+        
+        // 如果不需要透明图，不需要进行高质量缩放，scale 1 即可
         const scale = parseFloat(els.scaleFactor && els.scaleFactor.value ? els.scaleFactor.value : '4') || 4;
-        
-        // 如果不需要透明图，且只是为了预览，强制 scale = 1 或者一个较小的值来加速？
-        // 为了保持“导出裁剪图”功能的有效性，我们还是尊重 scale 设置，但可以优化执行路径。
-        // 如果不需要透明图，我们可以跳过 OpenCV 的高质量缩放，改用 Canvas 缩放，甚至如果 scale=1 直接用原图。
-        
-        const effectiveScale = isTransparentNeeded ? scale : 1; // 优化：如果不提取透明图，不做放大，大幅提升速度
-        
+        const effectiveScale = needTransparent ? scale : 1; 
+
         if (effectiveScale !== 1) {
-            if (window.cvReady && isTransparentNeeded) {
-                 // 只有需要透明图且有OpenCV时才用高质量缩放
+            // ... (OpenCV / Canvas 放大逻辑，同原代码) ...
+            if (window.cvReady) {
                 const src = cv.imread(c);
                 const dst = new cv.Mat();
                 const dsize = new cv.Size(Math.round(rw*effectiveScale), Math.round(rh*effectiveScale));
@@ -1043,32 +1138,26 @@ async function processImageTwoStage(config, reportProgress = true) {
                 src.delete(); dst.delete();
                 upCanvas = oc;
             } else {
-                const oc = document.createElement('canvas');
-                oc.width = Math.round(rw*effectiveScale); oc.height = Math.round(rh*effectiveScale);
-                const octx2 = oc.getContext('2d');
-                octx2.imageSmoothingEnabled = true;
-                octx2.imageSmoothingQuality = 'medium'; // 降低质量以提升速度
-                octx2.drawImage(c, 0, 0, oc.width, oc.height);
-                upCanvas = oc;
+                 const oc = document.createElement('canvas');
+                 oc.width = Math.round(rw*effectiveScale); oc.height = Math.round(rh*effectiveScale);
+                 const octx2 = oc.getContext('2d');
+                 octx2.imageSmoothingEnabled = true;
+                 octx2.imageSmoothingQuality = 'medium'; 
+                 octx2.drawImage(c, 0, 0, oc.width, oc.height);
+                 upCanvas = oc;
             }
         }
         
         const c1 = performance.now();
         cropTime += (c1 - c0);
-        // 如果不需要导出裁剪图（即不需要预览也不需要后续透明图处理），可以跳过生成预览图的步骤
-        // 但这里逻辑是：生成裁剪图 -> 显示预览 -> (可选)生成透明图
-        // 如果用户只想要框选坐标，其实不需要生成裁剪图。
-        // 但目前产品设计是必须显示预览。
-        // 优化点：如果图片过大，toDataURL会非常慢。
-        // 可以尝试降低预览图质量或尺寸，或者异步处理预览图生成。
-        // 这里暂时保持原样，因为需要预览。
         
-        const previewUrl = upCanvas.toDataURL('image/jpeg', 0.5); // 改为jpeg且降低质量，大幅提升速度
+        // 生成裁剪预览图（这是必要的，用于显示或下一步）
+        const previewUrl = upCanvas.toDataURL('image/jpeg', 0.5);
         b.previewDataUrl = previewUrl;
-        // renderCropGallery(); // 移除这行，我们在最后统一 append
 
-    if (els.extractTransparent && els.extractTransparent.checked) {
-        const up64 = previewUrl.split(',')[1];
+        // 【关键逻辑】：仅当勾选了 extractTransparent 时才请求多边形分割 API
+        if (needTransparent) {
+            const up64 = previewUrl.split(',')[1];
             const a0 = performance.now();
             const msg2 = [{ role: "user", content: [
                 { type: "text", text: `返回精确多边形 [{"label":"${b.label}","polygon":[[y,x],...]]}]，坐标归一化到0-1000。尤其要包含向外突出或向内凹的尖角和转折处` },
@@ -1077,6 +1166,7 @@ async function processImageTwoStage(config, reportProgress = true) {
             const polys = await callAPI(config, msg2);
             const a1 = performance.now();
             apiTime += (a1 - a0);
+            
             if (polys && polys[0] && polys[0].polygon) {
                 const mapped = polys[0].polygon.map(([y,x]) => {
                     const oy = ymin + (y/1000)*(ymax - ymin);
@@ -1084,29 +1174,36 @@ async function processImageTwoStage(config, reportProgress = true) {
                     return [oy, ox];
                 });
                 b.polygon = mapped;
+                
+                // 为了前端预览，这里仍会生成透明图数据
                 const tc = document.createElement('canvas');
                 tc.width = rw; tc.height = rh;
                 const tctx = tc.getContext('2d');
                 tctx.clearRect(0,0,rw,rh);
                 tctx.beginPath();
-                b.polygon.forEach((pt, i) => {
-                    const px = (pt[1] / 1000) * sw - rx;
-                    const py = (pt[0] / 1000) * sh - ry;
-                    if (i === 0) tctx.moveTo(px, py); else tctx.lineTo(px, py);
+                b.polygon.forEach((pt, k) => { 
+                   const px = (pt[1] / 1000) * sw - rx;
+                   const py = (pt[0] / 1000) * sh - ry;
+                   if (k === 0) tctx.moveTo(px, py); else tctx.lineTo(px, py);
                 });
                 tctx.closePath();
                 tctx.clip();
                 tctx.drawImage(state.img, rx, ry, rw, rh, 0, 0, rw, rh);
                 b.transparentPreviewUrl = tc.toDataURL('image/png');
             }
+        } else {
+            // 清理旧数据（防止复用对象污染）
+            delete b.polygon;
+            delete b.transparentPreviewUrl;
         }
+
         drawStyledAnnotation(octx, b, els.overlayCanvas.width, els.overlayCanvas.height);
         if (reportProgress) {
             updateProgress(Math.round(((i+1)/boxes.length)*100), `阶段2: ${i+1}/${boxes.length}`);
         }
     }
     const t2 = performance.now();
-    els.statusMsg.textContent = `阶段1：${stage1Time}ms，裁剪缩放：${Math.round(cropTime)}ms，API：${Math.round(apiTime)}ms，总计：${Math.round(t2 - t0)}ms`;
+    els.statusMsg.textContent = `阶段1：${stage1Time}ms，裁剪：${Math.round(cropTime)}ms，API：${Math.round(apiTime)}ms，总计：${Math.round(t2 - t0)}ms`;
     return state.annotations;
 }
 
@@ -1204,104 +1301,114 @@ async function processVideosBatch(config) {
 
 async function analyzeVideoFile(file, config, onProgress) {
     return new Promise(async (resolve, reject) => {
-        const video = document.createElement('video');
-        video.playsInline = true;
-        video.muted = true;
-        
-        // Cleanup function
-        const cleanup = () => {
-            if (video.src) URL.revokeObjectURL(video.src);
-            video.remove();
-        };
+        let frames = [];
+        let fps = 1;
 
-        video.onerror = (e) => {
-            console.error("Video load error", e);
-            cleanup();
-            resolve({ annotations: [], fps: 0 }); // Resolve empty to continue batch
-        };
+        // 1. 优先尝试从缓存获取抽帧结果 (Phase 1 产物)
+        if (state.videoFramesCache.has(file.name)) {
+            const cache = state.videoFramesCache.get(file.name);
+            frames = cache.frames;
+            fps = cache.fps;
+        } 
+        // 2. 如果没有缓存，则检查是否是恢复任务/导入任务 (Bug Fix核心)
+        else {
+            const video = document.createElement('video');
+            video.src = URL.createObjectURL(file);
+            await new Promise(r => video.onloadedmetadata = r);
 
-        video.src = URL.createObjectURL(file);
-        
-        video.onloadedmetadata = async () => {
-            try {
+            // [Bug Fix]: 检查 videoResults 中是否有旧的任务设置
+            const existingResult = state.videoResults.find(r => r.fileName === file.name);
+            
+            if (existingResult && existingResult.fps) {
+                fps = existingResult.fps;
+                // 同步 UI 告诉用户这是恢复的FPS
+                if($('frameRate')) $('frameRate').value = fps;
+            } else {
                 const fpsInput = $('frameRate');
-                const fps = fpsInput ? parseFloat(fpsInput.value || '1') : 1;
-                const frames = await extractFrames(video, fps);
-                
-                let allAnns = [];
-                let startIndex = 0;
-                
-                // Check for partial results
-                const existingResultIndex = state.videoResults.findIndex(r => r.fileName === file.name);
-                if (existingResultIndex !== -1) {
-                    const existing = state.videoResults[existingResultIndex];
-                    if (existing.annotations && existing.annotations.length > 0) {
-                         const lastTime = existing.annotations[existing.annotations.length - 1].time;
-                         const nextFrameIndex = frames.findIndex(f => f.time > lastTime + 0.01);
-                         if (nextFrameIndex !== -1) {
-                             startIndex = nextFrameIndex;
-                             allAnns = [...existing.annotations];
-                             state.videoResults.splice(existingResultIndex, 1);
-                             if (onProgress) onProgress(Math.round((startIndex / frames.length) * 100), `恢复进度: 从第 ${startIndex + 1} 帧继续...`);
-                         } else {
-                             cleanup();
-                             resolve(existing);
-                             return;
-                         }
-                    }
-                }
-                
-                const prompt = els.promptInput.value.trim() || '物体';
-                
-                const partialResult = { fileName: file.name, file, annotations: allAnns, fps, isPartial: true };
-                state.videoResults.push(partialResult);
-                
-                for (let i = startIndex; i < frames.length; i++) {
-                    while (window.TaskManager && window.TaskManager.isPaused) {
-                        if (window.TaskManager.isStopped) break;
-                        await new Promise(r => setTimeout(r, 500));
-                    }
-                    if (window.TaskManager && window.TaskManager.isStopped) break;
-    
-                    let classInstruction = "";
-                    if (state.unifiedClassMap.size > 0) {
-                        const classes = getAllClasses();
-                        const classListStr = classes.map((c, i) => `${i}:${c}`).join(',');
-                        classInstruction = `\n请严格优先使用以下已知类别标准名称(ID:名称): [${classListStr}]。`;
-                    }
-    
-                    try {
-                        const res = await callAPI(config, [{ role: "user", content: [
-                            { type: "text", text: `标注${prompt}并返回 JSON: [{"label":"${prompt}", "box_2d":[y1,x1,y2,x2]}]${classInstruction}` },
-                            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${frames[i].base64}` } }
-                        ]}]);
-                        
-                        res.forEach(b => getClassId(b.label));
-    
-                        const timedRes = res.map(r => ({ ...r, time: frames[i].time }));
-                        allAnns.push(...timedRes);
-                        
-                        partialResult.annotations = allAnns;
-                        
-                        if (onProgress) {
-                            onProgress(Math.round(((i + 1) / frames.length) * 100), `视频分析中: ${i + 1}/${frames.length} 帧`);
-                        }
-                    } catch (e) {
-                        console.error("Frame analysis failed", e);
-                    }
-                }
-                
-                delete partialResult.isPartial;
-                cleanup();
-                resolve({ annotations: allAnns, fps });
-            } catch (err) {
-                console.error("Video analysis error", err);
-                cleanup();
-                resolve({ annotations: [], fps: 0 });
+                fps = fpsInput ? parseFloat(fpsInput.value || '1') : 1;
             }
-        };
+
+            frames = await extractFrames(video, fps);
+            URL.revokeObjectURL(video.src);
+            video.remove();
+        }
+
+        // 接下来的逻辑是处理帧分析（API调用）
+        let allAnns = [];
+        let startIndex = 0;
+        
+        const existingResultIndex = state.videoResults.findIndex(r => r.fileName === file.name);
+        if (existingResultIndex !== -1) {
+            const existing = state.videoResults[existingResultIndex];
+            if (existing.annotations && existing.annotations.length > 0) {
+                 const lastTime = existing.annotations[existing.annotations.length - 1].time;
+                 const nextFrameIndex = frames.findIndex(f => f.time > lastTime + 0.01);
+                 if (nextFrameIndex !== -1) {
+                     startIndex = nextFrameIndex;
+                     allAnns = [...existing.annotations];
+                     state.videoResults.splice(existingResultIndex, 1);
+                     if (onProgress) onProgress(Math.round((startIndex / frames.length) * 100), `恢复进度: 从第 ${startIndex + 1} 帧继续...`);
+                 } else {
+                     resolve(existing);
+                     return;
+                 }
+            }
+        }
+        
+        const prompt = els.promptInput.value.trim() || '物体';
+        const classLabelInputVal = els.classLabelInput.value.trim();
+        const manualLabels = classLabelInputVal ? classLabelInputVal.split(/\s+/) : [];
+        const targetJsonLabel = (manualLabels.length > 0) ? manualLabels[0] : (classLabelInputVal || prompt);
+        
+        const partialResult = { fileName: file.name, file, annotations: allAnns, fps, isPartial: true };
+        state.videoResults.push(partialResult);
+        
+        let classInstruction = "";
+        if (state.unifiedClassMap.size > 0) {
+            const classes = getAllClasses();
+            const classListStr = classes.map((c, i) => `${i}:${c}`).join(',');
+            classInstruction = `\n请严格优先使用以下已知类别标准名称(ID:名称): [${classListStr}]。`;
+        } else if (manualLabels.length > 1) {
+             classInstruction = `\n多类别检测模式。请识别: ${JSON.stringify(manualLabels)}。返回的 "label" 字段必须严格匹配其中之一。`;
+        } else {
+             classInstruction = `\nOutput Label MUST be: "${targetJsonLabel}"`; 
+        }
+
+        for (let i = startIndex; i < frames.length; i++) {
+            while (window.TaskManager && window.TaskManager.isPaused) {
+                if (window.TaskManager.isStopped) break;
+                await new Promise(r => setTimeout(r, 500));
+            }
+            if (window.TaskManager && window.TaskManager.isStopped) break;
+
+            try {
+                const res = await callAPI(config, [{ role: "user", content: [
+                    { type: "text", text: `Task: ${prompt}. 标注并返回 JSON: [{"label":"${targetJsonLabel}", "box_2d":[y1,x1,y2,x2]}]${classInstruction}` },
+                    { type: "image_url", image_url: { url: `data:image/jpeg;base64,${frames[i].base64}` } }
+                ]}]);
+
+
+                
+                res.forEach(b => getClassId(b.label));
+
+                const timedRes = res.map(r => ({ ...r, time: frames[i].time }));
+                allAnns.push(...timedRes);
+                
+                partialResult.annotations = allAnns;
+                
+                if (onProgress) {
+                    onProgress(Math.round(((i + 1) / frames.length) * 100), `视频分析中: ${i + 1}/${frames.length} 帧`);
+                }
+            } catch (e) {
+                console.error("Frame analysis failed", e);
+            }
+        }
+        
+        delete partialResult.isPartial;
+        resolve({ annotations: allAnns, fps });
     });
 }
+
 
 async function runWithConcurrency(items, worker, concurrency) {
     let index = 0;
@@ -1763,3 +1870,66 @@ function exportTaggedVideo(item, onProgress) {
         drawFrame();
     });
 }
+// [新增] 批量抽帧函数
+async function batchExtractFrames() {
+    if (!state.files || state.files.length === 0) return;
+    
+    // UI状态：锁定按钮
+    state.isProcessing = true;
+    els.startBtn.disabled = true; 
+    els.startBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+    els.startBtn.classList.add('bg-gray-400', 'cursor-not-allowed');
+    els.progress.box.classList.remove('hidden');
+    
+    let completed = 0;
+    const total = state.files.length;
+    
+    const fpsInput = $('frameRate');
+    let targetFps = fpsInput ? parseFloat(fpsInput.value || '1') : 1;
+    
+    for (let i = 0; i < total; i++) {
+        const file = state.files[i];
+        
+        let frames = [];
+        let currentFps = targetFps;
+        
+        const existingResult = state.videoResults.find(r => r.fileName === file.name);
+        if (existingResult && existingResult.fps) {
+            currentFps = existingResult.fps;
+            if(fpsInput) fpsInput.value = currentFps;
+        }
+
+        // 定义细粒度进度回调
+        const onFrameProgress = (fileProgress) => {
+             // 总进度 = (已完成视频数 + 当前视频解码比例) / 总视频数
+             const totalPct = ((completed + fileProgress) / total) * 100;
+             updateProgress(totalPct, `正在抽帧 (${i+1}/${total}): ${file.name} - ${Math.round(fileProgress * 100)}%`);
+        };
+        
+        onFrameProgress(0); // 初始化进度显示
+
+        const video = document.createElement('video');
+        video.src = URL.createObjectURL(file);
+        await new Promise(r => video.onloadedmetadata = r);
+        
+        // 传入回调函数
+        frames = await extractFrames(video, currentFps, onFrameProgress);
+        
+        URL.revokeObjectURL(video.src);
+        video.remove();
+        
+        state.videoFramesCache.set(file.name, { frames, fps: currentFps });
+        completed++;
+    }
+    
+    updateProgress(100, '所有视频抽帧完成，请开始分析');
+    state.isProcessing = false;
+    state.videoAnalysisReady = true;
+    
+    els.startBtn.disabled = false;
+    els.startBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
+    els.startBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+    els.btnText.textContent = "开始分析"; 
+}
+
+

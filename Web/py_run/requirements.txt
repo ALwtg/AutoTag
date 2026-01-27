@@ -1,0 +1,5 @@
+requests
+opencv-python
+numpy
+tqdm
+ttkbootstrap
